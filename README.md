@@ -1,84 +1,94 @@
-# I'm Not in Love, one simulated throat
+# I'm Not in Love, sung by one simulated throat
 
-These scripts rebuild 10cc's "I'm Not in Love" (1975) with [Chimera](https://github.com/jamesondh/chimera-vocal-synth), a physical-model voice synth. Chimera simulates the lungs, vocal folds, airway and lips. It uses no samples and no neural audio.
+10cc's "I'm Not in Love" (1975), rebuilt with [Chimera](https://github.com/jamesondh/chimera-vocal-synth), the vocal synth by Jameson Hodge. Every sound in the track comes from Chimera. Every face in the video is Chimera's own screen, replaying what the synth sang.
 
-Every sound in the track comes from Chimera. The video shows Chimera's own instrument screens, which replay the telemetry the synth recorded while it sang.
+[![The bridge: 32 Chimera voices on the wall](media/poster.jpg)](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-cut.mp4)
 
-## What is in the track
+**Watch:** [the 38-second cut](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-cut.mp4) · [the full track, 3:45](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-full.mp4)
 
-- **Lead.** One male voice sings the melody from a note transcription. A second, slightly detuned copy plays 12 ms late, the way 1970s double-tracking worked.
-- **Choir.** 10cc made their choir from tape loops of their own voices: 16 passes of 3 voices on each note, played on the mixing desk faders. The scripts do the same. Each pitch is one held "ah" of about 10 s. Each pitch has 2 to 5 detuned passes across male, female and child bodies. The loops run all the time at -24 dB, as 10cc's taped faders did. A fader brings a loop up when its chord plays.
-- **Choir top line.** A high female and child line follows the chords, about an octave above the bed.
-- **Harmonies.** Diatonic thirds above and below the lead in the choruses, the bridge and the outro.
-- **Break.** An "ooh" melody, transcribed from the original.
-- **Fill.** A hummed, electric-piano-style figure at the end of each verse half. It auto-pans at 5 Hz.
-- **Whisper.** "Big boys don't cry" uses Chimera's unvoiced mode, so the vocal folds do not vibrate.
-- **Kick.** Chimera's beatbox mouth.
-- **Stereo.** Each loop has its own position across the stereo field. The width was measured against the original.
+**Chimera:** [repo](https://github.com/jamesondh/chimera-vocal-synth) · [try it in the browser](https://chimera.audio)
 
-## What is not included
+## Why this song
 
-The original recording, the lyrics and the note transcription are copyright material. This repo does not include them. You supply them yourself. See [inputs/README.md](inputs/README.md) for the formats.
+Most synths make sounds. Chimera grows a voice: it simulates the lungs, vocal folds, airway and lips, with no samples and no neural audio. That makes it a new instrument.
 
-## Requirements
+In 1975, 10cc built a new instrument too. They wanted a choir without a choir or a synth. So they sang every note 16 times, three voices at a time, cut the recordings into long tape loops, and played the loops on the mixing desk faders like keys. That is 624 voices from three people.
 
-- macOS or Linux, Rust (stable), Bun, Python 3 with numpy, ffmpeg, Node with Playwright.
-- A clone of Chimera with the patch in `patches/` applied.
+This repo does the same trick with one simulated throat.
 
-## Steps
+## How the track is made
 
-1. **Build Chimera with the patch.**
+- **Lead.** One male Chimera voice sings the melody. A quiet, slightly out-of-tune copy plays 12 ms behind it, like 1970s double-tracking.
+- **The choir.** One held "ah" of about 10 seconds for each note, looped like tape. Each note has 2 to 5 copies across male, female and child voices, each a little out of tune. Every loop plays all the time at a low level, because 10cc taped their faders so they never fully closed. A loop comes up when its chord plays.
+- **The high line.** Female and child voices hold the top note of each chord, about an octave above the rest.
+- **Harmonies.** Voices a third above and below the lead in the choruses, the bridge and the end.
+- **The break.** An "ooh" melody, copied from the original.
+- **The fill.** A hummed, electric-piano-style figure at the end of each verse half. It swings left and right five times a second.
+- **The whisper.** "Big boys don't cry" uses Chimera's whisper mode, where the vocal folds don't vibrate.
+- **The kick.** Chimera's beatbox mouth.
+- **Stereo.** Each loop sits in its own place from left to right, as wide as the original.
+
+## How the video is made
+
+Chimera draws its voice as it sings: the head in cross-section, the airway, the vocal folds, the sound spectrum. When it renders a note, it can also save that data frame by frame. The video plays that data back through Chimera's own screens, one face per voice that is actually sounding. Verses show one face. The bridge shows 32. A virtual clock steps the browser one frame at a time, so the picture stays in exact sync with the sound.
+
+## What is not here
+
+The original recording, the lyrics and the note transcription are copyright, so they are not in this repo. You bring your own. [inputs/README.md](inputs/README.md) shows the formats.
+
+## Make it yourself
+
+You need: macOS or Linux, Rust, Bun, Python 3 with numpy, ffmpeg and Node.
+
+1. **Build Chimera with this repo's patch.** The patch adds a whisper switch and the playback screens.
 
    ```sh
    git clone https://github.com/jamesondh/chimera-vocal-synth
+   git clone https://github.com/b1rdmania/chimera-10cc
    cd chimera-vocal-synth
-   git checkout $(cat ../chimera-10cc-recipe/patches/BASE_COMMIT)
-   git apply ../chimera-10cc-recipe/patches/chimera-local.patch
+   git checkout $(cat ../chimera-10cc/patches/BASE_COMMIT)
+   git apply ../chimera-10cc/patches/chimera-local.patch
    cargo build --release -p chimera-cli
    bun install
+   cd ../chimera-10cc
    ```
 
-   The patch adds two things: a `CHIMERA_WHISPER` switch for the text renderer, and hidden replay routes that make the app's screens play back recorded telemetry.
+2. **Add your inputs.** See [inputs/README.md](inputs/README.md).
 
-2. **Add your inputs.** Put them where [inputs/README.md](inputs/README.md) says.
-
-3. **Render and mix the track.**
+3. **Make the track.** This takes 10 to 20 minutes and writes `not-in-love-full.wav`.
 
    ```sh
-   cd chimera-10cc-recipe
    CHIMERA=../chimera-vocal-synth/target/release/chimera ./render.sh
    ```
 
-   This writes `not-in-love-full.wav` and `.mp3`. The renders take about 10 to 20 minutes on an M-series Mac.
-
-4. **Make the video.**
+4. **Make the video.** Each capture step takes about 4 minutes.
 
    ```sh
-   npm install && npx playwright install chromium          # browser for the frame capture
-   python3 film/env.py                                     # measured loudness per track
+   npm install && npx playwright install chromium
+   python3 film/env.py
    CHIMERA_REPO=../chimera-vocal-synth python3 film2/tools/prep3.py --render
-   (cd ../chimera-vocal-synth && bun run dev) &            # serves the app on 127.0.0.1:5317
+   (cd ../chimera-vocal-synth && bun run dev) &
    mkdir -p film2/segs
-   node film2/tools/cap3.mjs video 0 75 film2/segs/a.mp4   # capture the wall, song time 0-75 s
+   node film2/tools/cap3.mjs video 0 75 film2/segs/a.mp4
    node film2/tools/cap3.mjs video 75 150 film2/segs/b.mp4
    node film2/tools/cap3.mjs video 150 225 film2/segs/c.mp4
-   ./film2/tools/assemble.sh                               # join the segments and add the song
+   ./film2/tools/assemble.sh
    ```
 
-   The capture runs on a virtual clock, so the picture is in exact sync with the audio. Each segment takes about 4 minutes. The wall layout changes on the song's phrases. Each face replays the telemetry of one voice that sounds at that moment, from 1 face in the verses to 32 in the bridge.
+## Known gaps
 
-## Known limits
-
-- The melody comes from a crowd-sourced transcription. Some notes can be wrong.
-- The fill was transcribed from separated stems. It was not checked by ear.
-- Some consonants are soft. Chimera's plosives are quiet, and the choir can mask them.
-- The app patch is a local hack for this film. It is not a Chimera feature.
+- The melody comes from a crowd-sourced transcription, so some notes may be off.
+- The fill was worked out from separated audio, not checked by ear.
+- Some consonants are soft.
+- The patch is a quick local change for this video, not a Chimera feature.
+- The full render and capture have run on one machine. Expect some first-run friction.
 
 ## Credits
 
-- Chimera is by Jameson Hodge (MIT).
-- "I'm Not in Love" is by Eric Stewart and Graham Gouldman, recorded by 10cc in 1975.
+- [Chimera](https://github.com/jamesondh/chimera-vocal-synth) by Jameson Hodge, MIT.
+- "I'm Not in Love" by Eric Stewart and Graham Gouldman, recorded by 10cc, 1975.
+- Built by [@b1rdmania](https://github.com/b1rdmania) with Claude Code.
 
 ## License
 
-The scripts in this repo are MIT. The song and recording belong to their owners.
+The scripts are MIT. The song and the recording belong to their owners.
