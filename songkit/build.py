@@ -1,6 +1,6 @@
 """songkit: make a song with Chimera the way 10cc made "I'm Not in Love".
 
-    python songkit/build.py songs/daisy-bell.json
+    python songkit/build.py songs/example.json
 
 Reads one song file, renders every voice with Chimera, then mixes:
 - the lead, plus a quiet out-of-tune double 12 ms behind it
