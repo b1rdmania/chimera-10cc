@@ -14,13 +14,13 @@ You are a coding agent. A person wants a song sung entirely by Chimera, the phys
 
 2. Install numpy and ffmpeg (`pip install numpy`, `brew install ffmpeg` or your package manager).
 
-3. Test with the example: `python3 songkit/build.py songs/daisy-bell.json`. It takes under a minute and writes `out/daisy-bell/daisy-bell.mp3`.
+3. Test with the example: `python3 songkit/build.py songs/example.json`. It takes under a minute and writes `out/example/example.mp3`.
 
 ## Make a song
 
 1. **Get the song from the person.** You need a melody and words. Ask for the tune, a hummed recording described in notes, sheet music, or a well-known public-domain song. Do not transcribe or reproduce copyrighted lyrics or melodies the person does not own.
-2. **Write a song file** in `songs/<name>.json`. Copy `songs/daisy-bell.json` and change it. The fields are below.
-3. **Check the syllables.** Run `$CHIMERA syllables "<lyrics>"`. It must give exactly one syllable per sung note. Split words into syllables with spaces ("ba by"). Use `~` to hold the last vowel over an extra note. If a word splits wrong, respell it ("mar ridge", not "mar riage").
+2. **Write a song file** in `songs/<name>.json`. Copy `songs/example.json` and change it. The fields are below.
+3. **Check the syllables.** Run `$CHIMERA syllables "<lyrics>"`. It must give exactly one syllable per sung note. Split words into syllables with spaces ("ba by"). Use `~` to hold the last vowel over an extra note. If a word splits wrong, respell it (for example "ridge" for "riage").
 4. **Render:** `python3 songkit/build.py songs/<name>.json`.
 5. **Give the person the mp3** from `out/<name>/`. Ask what to change, edit the song file and render again. Delete `out/<name>/` before a re-render if you changed the melody or the chords, because finished renders are reused.
 

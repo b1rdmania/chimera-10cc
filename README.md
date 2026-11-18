@@ -4,7 +4,7 @@
 
 [![The bridge: 32 Chimera voices on the wall](10cc/media/poster.jpg)](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-cut.mp4)
 
-**Watch:** [the 38-second cut](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-cut.mp4) · [the full track, 3:45](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-full.mp4) · [Daisy Bell, made with the kit](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/daisy-bell.mp3)
+**Watch:** [the 38-second cut](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-cut.mp4) · [the full track, 3:45](https://github.com/b1rdmania/chimera-10cc/releases/download/v1/im-not-in-love-chimera-full.mp4)
 
 **Chimera:** [repo](https://github.com/jamesondh/chimera-vocal-synth) · [try it in the browser](https://chimera.audio)
 
@@ -14,7 +14,7 @@ Point your coding agent (Claude Code, Codex, Cursor) at this repo and ask for a 
 
 > Clone github.com/b1rdmania/chimera-10cc, read AGENTS.md, and make me a Chimera track of [your song]. Female lead, a harmony a third above in the chorus, a thick "ooh" choir.
 
-The agent writes one small song file (tempo, key, melody, words, harmonies) and runs `songkit/build.py`. You get an mp3 in about a minute. `AGENTS.md` has the full instructions and the song file format. `songs/daisy-bell.json` is a worked example: Daisy Bell, the first song a computer ever sang, in 1961.
+The agent writes one small song file (tempo, key, melody, words, harmonies) and runs `songkit/build.py`. You get an mp3 in about a minute. `AGENTS.md` has the full instructions and the song file format. `songs/example.json` is a short worked example.
 
 You can also run it by hand:
 
@@ -22,7 +22,7 @@ You can also run it by hand:
 git clone https://github.com/jamesondh/chimera-vocal-synth
 (cd chimera-vocal-synth && cargo build --release -p chimera-cli)
 git clone https://github.com/b1rdmania/chimera-10cc && cd chimera-10cc
-CHIMERA=../chimera-vocal-synth/target/release/chimera python3 songkit/build.py songs/daisy-bell.json
+CHIMERA=../chimera-vocal-synth/target/release/chimera python3 songkit/build.py songs/example.json
 ```
 
 You need Rust, Python 3 with numpy, and ffmpeg.
@@ -58,7 +58,6 @@ Chimera draws its voice as it sings: the head in cross-section, the airway, the 
 
 - [Chimera](https://github.com/jamesondh/chimera-vocal-synth) by Jameson Hodge, MIT.
 - "I'm Not in Love" by Eric Stewart and Graham Gouldman, recorded by 10cc, 1975.
-- "Daisy Bell" by Harry Dacre, 1892, public domain.
 - Built by [@b1rdmania](https://github.com/b1rdmania) with Claude Code.
 
 ## License

@@ -1,0 +1,180 @@
+{
+  "title": "Example (original melody and words, free to use)",
+  "bpm": 72,
+  "beats_per_bar": 4,
+  "key": "C",
+  "scale": "major",
+  "intro_bars": 2,
+  "lead": {
+    "body": "female",
+    "octave": 0,
+    "lyrics": "one voice in the dark room sing ing to it self ~ then a sec ond voice comes in and the room starts to fill ~",
+    "notes": [
+      [
+        64,
+        1
+      ],
+      [
+        67,
+        1
+      ],
+      [
+        69,
+        1
+      ],
+      [
+        67,
+        1
+      ],
+      [
+        64,
+        1
+      ],
+      [
+        62,
+        1
+      ],
+      [
+        60,
+        1
+      ],
+      [
+        62,
+        1
+      ],
+      [
+        64,
+        1
+      ],
+      [
+        62,
+        1
+      ],
+      [
+        60,
+        2
+      ],
+      [
+        60,
+        2
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        64,
+        1
+      ],
+      [
+        67,
+        1
+      ],
+      [
+        69,
+        1
+      ],
+      [
+        72,
+        1
+      ],
+      [
+        71,
+        1
+      ],
+      [
+        69,
+        1
+      ],
+      [
+        67,
+        1
+      ],
+      [
+        65,
+        1
+      ],
+      [
+        64,
+        1
+      ],
+      [
+        62,
+        1
+      ],
+      [
+        60,
+        1
+      ],
+      [
+        62,
+        1
+      ],
+      [
+        60,
+        2
+      ],
+      [
+        60,
+        2
+      ]
+    ]
+  },
+  "chords": [
+    [
+      "C",
+      4
+    ],
+    [
+      "Am",
+      4
+    ],
+    [
+      "F",
+      4
+    ],
+    [
+      "G",
+      4
+    ],
+    [
+      "C",
+      4
+    ],
+    [
+      "Em",
+      4
+    ],
+    [
+      "F",
+      2
+    ],
+    [
+      "G",
+      2
+    ],
+    [
+      "C",
+      4
+    ]
+  ],
+  "harmonies": [
+    {
+      "name": "high",
+      "body": "female",
+      "steps": 2,
+      "from_bar": 5
+    },
+    {
+      "name": "low",
+      "body": "male",
+      "steps": -2,
+      "from_bar": 5
+    }
+  ],
+  "choir": {
+    "vowel": "ah",
+    "passes": 3,
+    "floor_db": -24
+  }
+}
