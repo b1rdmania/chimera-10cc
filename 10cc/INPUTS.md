@@ -4,7 +4,7 @@ The scripts need three inputs. They are copyright material, so this repo does no
 
 ## 1. Melody and chords: `ht-verse.json`, `ht-chorus.json`, `ht-bridge.json`
 
-Put these in the repo root. `song.py` reads each section's notes in this shape:
+Put these in the `10cc/` folder. `song.py` reads each section's notes in this shape:
 
 ```json
 {"jsonData": "{\"notes\": [{\"sd\": \"3\", \"octave\": 0, \"beat\": 1.75, \"duration\": 0.25, \"isRest\": false}]}"}

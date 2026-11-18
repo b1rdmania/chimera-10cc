@@ -1,0 +1,20 @@
+{
+  "title": "Daisy Bell (Harry Dacre, 1892, public domain)",
+  "bpm": 150,
+  "beats_per_bar": 3,
+  "key": "B",
+  "scale": "major",
+  "intro_bars": 4,
+  "lead": {
+    "body": "male",
+    "octave": -1,
+    "lyrics": "dai sy dai sy give me your an swer do i'm half cra zy all for the love of you it won't be a sty lish mar ridge i can't af ford a car ridge but you'll look sweet u pon the seat of a bi cyc le built for two",
+    "notes": [[66,3],[63,3],[59,3],[54,3],[56,1],[58,1],[59,1],[56,2],[59,1],[54,6],[61,3],[66,3],[63,3],[59,3],[56,1],[58,1],[59,1],[61,2],[63,1],[61,5],[63,1],[64,1],[63,1],[61,1],[66,2],[63,1],[61,1],[59,4],[61,1],[63,2],[59,1],[56,2],[59,1],[56,1],[54,4],[54,1],[59,2],[63,1],[61,2],[54,1],[59,2],[63,1],[61,1],[63,1],[64,1],[66,1],[63,1],[59,1],[61,2],[54,1],[59,6]]
+  },
+  "chords": "auto",
+  "harmonies": [
+    {"name": "high", "body": "female", "steps": 2, "from_bar": 9},
+    {"name": "low", "body": "male", "steps": -2, "from_bar": 17}
+  ],
+  "choir": {"vowel": "ah", "passes": 3, "floor_db": -24}
+}

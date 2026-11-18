@@ -1,7 +1,7 @@
 #!/bin/bash
 # Render every voice with Chimera, then mix and master.
 # Needs: CHIMERA=/path/to/chimera (the patched CLI), python3 with numpy, ffmpeg.
-# Inputs (not included, see inputs/README.md): ht-verse.json, ht-chorus.json, ht-bridge.json,
+# Inputs (not included, see INPUTS.md): ht-verse.json, ht-chorus.json, ht-bridge.json,
 # src/official.en.vtt, inputs/whisper.txt.
 set -e
 cd "$(dirname "$0")"
