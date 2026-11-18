@@ -1,0 +1,1507 @@
+diff --git a/crates/chimera-cli/src/render.rs b/crates/chimera-cli/src/render.rs
+index 28197ba..9bc06fb 100644
+--- a/crates/chimera-cli/src/render.rs
++++ b/crates/chimera-cli/src/render.rs
+@@ -197,6 +197,9 @@ pub fn say(g: &EnglishG2P, text: &str, body_name: &str) -> Result<Spoken, String
+         .collect();
+     let mut voice = HumanVoice::new(FS, b, 2);
+     voice.set_source(&SourcePatch::f0(f0));
++    if std::env::var("CHIMERA_WHISPER").is_ok() {
++        voice.set_source(&SourcePatch { voiced: Some(false), ..Default::default() });
++    }
+     let inputs: Vec<PhraseInput> = phrases
+         .iter()
+         .map(|p| PhraseInput {
+diff --git a/src/ui/App.tsx b/src/ui/App.tsx
+index 8abdd20..63ef15c 100644
+--- a/src/ui/App.tsx
++++ b/src/ui/App.tsx
+@@ -24,6 +24,9 @@ import { presetOf, PRESETS } from "./body.ts";
+ // three.js only loads when the 3D view is first shown
+ const AnatomyView3D = lazy(() => import("./components/AnatomyView3D.tsx").then((m) => ({ default: m.AnatomyView3D })));
+ // the duet page (`?show=<id>`): two 3D heads replaying a pre-rendered song
++const FullPage = lazy(() => import("./components/FullPage.tsx").then((m) => ({ default: m.FullPage }))); // LOCAL FILM PATCH
++const MergedPage = lazy(() => import("./components/MergedPage.tsx").then((m) => ({ default: m.MergedPage }))); // LOCAL FILM PATCH
++const ReplayPage = lazy(() => import("./components/ReplayPage.tsx").then((m) => ({ default: m.ReplayPage }))); // LOCAL FILM PATCH
+ const DuetPage = lazy(() => import("./components/DuetPage.tsx").then((m) => ({ default: m.DuetPage })));
+ 
+ /** the show to play, from `?show=<id>` (a plain folder name under public/shows) */
+@@ -181,6 +184,13 @@ function PlayRight() {
+ }
+ 
+ export function App() {
++  const replay = new URLSearchParams(window.location.search).get("replay"); // LOCAL FILM PATCH
++  if (replay && /^[\w-]+$/.test(replay))
++    return (
++      <Suspense fallback={null}>
++        {new URLSearchParams(window.location.search).get("shot") === "full" ? <FullPage id={replay} /> : new URLSearchParams(window.location.search).get("shot") === "merged" ? <MergedPage id={replay} /> : <ReplayPage id={replay} shot={new URLSearchParams(window.location.search).get("shot") ?? "wall"} />}
++      </Suspense>
++    );
+   const show = showId();
+   if (show)
+     return (
+diff --git a/src/ui/components/AnatomyView.tsx b/src/ui/components/AnatomyView.tsx
+index 3d902dd..a713cf0 100644
+--- a/src/ui/components/AnatomyView.tsx
++++ b/src/ui/components/AnatomyView.tsx
+@@ -3,7 +3,7 @@ import { recording } from "../../song/record.ts";
+ import { AnatomyRenderer, type FaceView, type HandleId, type Slot } from "../render/anatomy.ts";
+ import { Glow } from "../render/vector.ts";
+ import { engine } from "../../audio/AudioEngine.ts";
+-import { sameBody } from "../body.ts";
++import { sameBody, type BodyMix } from "../body.ts";
+ import { useStore } from "../store.ts";
+ import { VoiceModel } from "../analysis.ts";
+ import { useModel } from "../useModel.ts";
+@@ -47,7 +47,10 @@ export const articulatorSlots: SlotsFn = (m, a, f, formants) => [
+   f.velumPort > 0.02 ? { label: "Soft palate", value: f.velumPort.toFixed(2), unit: "cm²", color: V.white } : { label: "Soft palate", value: "Shut", color: V.white },
+ ];
+ 
+-export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn }) {
++export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; body?: BodyMix; feed?: () => TelemetryMessage | null; bare?: boolean }) {
++  // LOCAL FILM PATCH: a replayed voice brings its own body and telemetry
++  const feedRef = useRef(props.feed);
++  feedRef.current = props.feed;
+   const overlayRef = useRef<OverlayFn | undefined>(props.overlay);
+   overlayRef.current = props.overlay;
+   const formantsRef = useRef(props.showFormants ?? true);
+@@ -58,7 +61,7 @@ export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormant
+   infoRef.current = props.info ?? tractInfo;
+   const canvasRef = useRef<HTMLCanvasElement>(null);
+   const wrapRef = useRef<HTMLDivElement>(null);
+-  const model = useModel();
++  const model = useModel(props.body);
+   const [hover, setHover] = useState<HandleId | null>(null);
+   const dragRef = useRef<{ id: HandleId; start: { x: number; y: number }; artic: HumanArtic } | null>(null);
+   const hoverRef = useRef<HandleId | null>(null);
+@@ -70,12 +73,13 @@ export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormant
+     const ctx = canvas.getContext("2d")!;
+     const wrap = wrapRef.current!;
+     const r = new AnatomyRenderer();
++    r.bare = !!props.bare; // LOCAL FILM PATCH
+     const glow = new Glow();
+     rendererRef.current = r;
+     let w = 0, h = 0, dpr = 1;
+     const fit = () => {
+       const b = wrap.getBoundingClientRect();
+-      dpr = Math.min(2, window.devicePixelRatio || 1);
++      dpr = Math.min((window as { __maxDpr?: number }).__maxDpr ?? 2, window.devicePixelRatio || 1);
+       w = b.width;
+       h = b.height;
+       canvas.width = Math.max(1, Math.round(w * dpr));
+@@ -93,9 +97,9 @@ export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormant
+       // the face's expression keeps real time (a held note lasts as long at a low frame rate)
+       const elapsed = Math.min(0.5, (now - last) / 1000);
+       last = now;
+-      if (Math.min(2, window.devicePixelRatio || 1) !== dpr) fit();
++      if (Math.min((window as { __maxDpr?: number }).__maxDpr ?? 2, window.devicePixelRatio || 1) !== dpr) fit();
+       const st = useStore.getState();
+-      const tele = engine.latest && sameBody(engine.latest.body, st.body) ? engine.latest : null;
++      const tele = feedRef.current ? feedRef.current() : engine.latest && sameBody(engine.latest.body, st.body) ? engine.latest : null;
+       const a = tele ? VoiceModel.articFromArray(tele.t.artic) : st.artic;
+       r.face.update(tele, elapsed);
+       const m = model.current;
+diff --git a/src/ui/render/anatomy.ts b/src/ui/render/anatomy.ts
+index 0677e53..5330076 100644
+--- a/src/ui/render/anatomy.ts
++++ b/src/ui/render/anatomy.ts
+@@ -151,6 +151,8 @@ export class AnatomyRenderer {
+   private h = 0;
+   /** a narrow screen (a phone): readouts in a row above the head, slots in a row below it */
+   private compact = false;
++  /** LOCAL FILM PATCH: no readouts at all: the head fills the screen, centred */
++  bare = false;
+   private sparkSeed = 1;
+   private geo: Profile | null = null;
+   private echoes: Echo[] = [];
+@@ -172,12 +174,12 @@ export class AnatomyRenderer {
+     // the readouts need room beside the head; a narrow screen (a phone) moves them above and below it.
+     // A tall desktop screen keeps them beside it: the head is then fitted to the width and centred,
+     // leaving room above and below, where the compact rows ran over the skull.
+-    this.compact = w < 560;
++    this.compact = w < 560 && !this.bare;
+     const padX = 12, padT = this.compact ? 62 : 10, padB = this.compact ? 92 : 8;
+     this.scale = Math.max(1, Math.min((w - 2 * padX) / (HEAD.x1 - HEAD.x0), (h - padT - padB) / (HEAD.y1 - HEAD.y0)));
+     // left-aligned when there is room to spare, so the readouts get the space in front of the face
+     const spare = w - 2 * padX - (HEAD.x1 - HEAD.x0) * this.scale;
+-    this.ox = padX + (this.compact ? spare / 2 : Math.min(spare / 2, Math.max(0, spare - 220))) - HEAD.x0 * this.scale;
++    this.ox = padX + (this.compact || this.bare ? spare / 2 : Math.min(spare / 2, Math.max(0, spare - 220))) - HEAD.x0 * this.scale;
+     this.oy = padT + Math.max(0, (h - padT - padB - (HEAD.y1 - HEAD.y0) * this.scale) / 2) + HEAD.y1 * this.scale;
+     for (const p of this.particles) p.px = NaN;
+   }
+diff --git a/src/ui/useModel.ts b/src/ui/useModel.ts
+index 2bd3e1a..2117210 100644
+--- a/src/ui/useModel.ts
++++ b/src/ui/useModel.ts
+@@ -26,8 +26,9 @@ export function getModel(body: BodyMix, sampleRate: number): VoiceModel {
+   return m;
+ }
+ 
+-export function useModel(): React.MutableRefObject<VoiceModel | null> {
+-  const body = useStore((s) => s.body);
++export function useModel(override?: BodyMix): React.MutableRefObject<VoiceModel | null> {
++  const storeBody = useStore((s) => s.body);
++  const body = override ?? storeBody; // LOCAL FILM PATCH: a replayed voice brings its own body
+   const started = useStore((s) => s.started);
+   // the audio's rate drops to 32 kHz on a device that can't keep up at 48
+   const light = useStore((s) => s.lightAudio);
+diff --git a/src/ui/usePhosphor.ts b/src/ui/usePhosphor.ts
+index a44efee..db7f5af 100644
+--- a/src/ui/usePhosphor.ts
++++ b/src/ui/usePhosphor.ts
+@@ -19,7 +19,7 @@ export function usePhosphor(draw: (f: CanvasFrame) => void, opts: { sigma?: numb
+     let w = 0, h = 0, dpr = 1;
+     const fit = () => {
+       const r = canvas.getBoundingClientRect();
+-      dpr = Math.min(2, window.devicePixelRatio || 1);
++      dpr = Math.min((window as { __maxDpr?: number }).__maxDpr ?? 2, window.devicePixelRatio || 1);
+       w = r.width;
+       h = r.height;
+       canvas.width = Math.max(1, Math.round(w * dpr));
+@@ -33,7 +33,7 @@ export function usePhosphor(draw: (f: CanvasFrame) => void, opts: { sigma?: numb
+       const dt = Math.min(0.05, (now - last) / 1000);
+       last = now;
+       // a window moved to a display with another scale changes DPR without a resize
+-      if (Math.min(2, window.devicePixelRatio || 1) !== dpr) fit();
++      if (Math.min((window as { __maxDpr?: number }).__maxDpr ?? 2, window.devicePixelRatio || 1) !== dpr) fit();
+       if (w > 0 && h > 0) {
+         ctx.setTransform(1, 0, 0, 1, 0, 0);
+         ctx.globalCompositeOperation = "source-over";
+diff --git a/src/ui/components/FullPage.tsx b/src/ui/components/FullPage.tsx
+new file mode 100644
+index 0000000..8eae302
+--- /dev/null
++++ b/src/ui/components/FullPage.tsx
+@@ -0,0 +1,591 @@
++/**
++ * LOCAL FILM PATCH (uncommitted): `?replay=full-merged&shot=full`, the full merged film's wall.
++ * Every pane replays one voice's own recorded telemetry in its own body: the lead, its double, the
++ * high / low / octave / lift harmonies, the break's two "ooh" voices, and every pass of the
++ * tape-loop choir at its exact tape position on its real fader. The wall is a sequence of full
++ * layouts (templates); a layout changes by a clean wipe on a phrase boundary, so the frame is never
++ * half-empty. `window.__replayFull(t)` sets song time t (telemetry and layout) before each frame.
++ */
++import { useEffect, useRef, useState } from "react";
++import { engine } from "../../audio/AudioEngine.ts";
++import { useStore } from "../store.ts";
++import { TeleTrack } from "../../show/tele.ts";
++import { AnatomyView, type OverlayFn, type SlotsFn } from "./AnatomyView.tsx";
++import { Stroboscope } from "./Stroboscope.tsx";
++import { SpectrumView } from "./SpectrumView.tsx";
++import { Screen } from "./Screen.tsx";
++import { V, heat, pressureLevel } from "../colors.ts";
++import { beam, beamPts, seg, type Pt } from "../render/vector.ts";
++import { usePhosphor } from "../usePhosphor.ts";
++import { analyser, drawIpa, glyphW } from "./ReplayPage.tsx";
++import type { TelemetryMessage } from "../../worklet/protocol.ts";
++import type { BodyMix } from "../../wasm/types.ts";
++
++// ------------------------------------------------------------------ data
++interface Note {
++  midi: number;
++  t0: number;
++  t1: number;
++  show: string;
++}
++interface Pass {
++  stem: string;
++  midi: number;
++  body: "male" | "female" | "child";
++  pass: number;
++  off: number;
++}
++interface FullFile {
++  fps: number;
++  end: number;
++  pitches: { midi: number; fader: number[] }[];
++  passes: Pass[];
++  notes: Record<string, Note[]>;
++  env: Record<string, number[]>;
++  envRate: number;
++  chords: [number, number, number[]][];
++}
++const VOICES = ["lead", "double", "high", "low", "octave", "lift", "oohf", "oohc"] as const;
++type VoiceName = (typeof VOICES)[number];
++const COLOR: Record<string, string> = { lead: V.white, double: V.white, high: V.pink, low: V.green, octave: V.amber, lift: V.red, oohf: V.pink, oohc: V.amber, whisper: V.white, kick: V.red };
++const STRIPS = ["lead", "double", "high", "low", "octave", "lift", "oohf", "oohc", "whisper", "kick"];
++const W = 1920, H = 1080, GAP = 12, LOOP = 9.4, SR = 48000;
++const BODY: Record<string, BodyMix> = { male: { female: 0, child: 0 }, female: { female: 1, child: 0 }, child: { female: 0, child: 1 } };
++/** heads sized by body, as in the heads film: a female head is drawn smaller than a male, a child's smaller still */
++const BODY_SCALE: Record<string, number> = { male: 1, female: 0.84, child: 0.7 };
++
++const M = {
++  t: 0,
++  file: null as FullFile | null,
++  tracks: new Map<string, TeleTrack>(),
++  msgs: new Map<string, TelemetryMessage>(),
++  fader: new Map<number, number[]>(),
++  pass: new Map<string, Pass>(),
++  pcm: null as Float32Array | null,
++  act: 0,
++  lastT: -1,
++};
++
++const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
++const ease = (u: number) => (u <= 0 ? 0 : u >= 1 ? 1 : u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
++
++function faderAt(midi: number, t: number): number {
++  const a = M.fader.get(midi);
++  if (!a) return 0;
++  const x = t * M.file!.fps, i = Math.min(a.length - 2, Math.max(0, Math.floor(x)));
++  return a[i] + (a[i + 1] - a[i]) * clamp01(x - i);
++}
++function envAt(name: string, t: number): number {
++  const f = M.file!, a = f.env[name];
++  if (!a) return 0;
++  const x = t * f.envRate, i = Math.floor(x);
++  if (i < 0) return 0;
++  if (i >= a.length - 1) return a[a.length - 1];
++  return a[i] + (a[i + 1] - a[i]) * (x - i);
++}
++/** how far t is from the lead's singing: 0 while it sings, 1 deep in a rest */
++function leadRest(t: number): number {
++  const notes = M.file!.notes.lead;
++  let prevEnd = -Infinity, nextStart = Infinity;
++  for (const n of notes) {
++    if (n.t0 <= t && t <= n.t1) return 0;
++    if (n.t1 < t) prevEnd = n.t1;
++    else if (n.t0 > t) {
++      nextStart = n.t0;
++      break;
++    }
++  }
++  return ease(clamp01((t - prevEnd - 0.35) / 0.7)) * ease(clamp01((nextStart - t - 0.55) / 0.7));
++}
++
++// ------------------------------------------------------------------ layout: templates, tiled
++interface Rect {
++  x: number;
++  y: number;
++  w: number;
++  h: number;
++}
++type Kind = "face" | "spec" | "folds" | "desk";
++type FaceMode = "lead" | "glyph" | "plain";
++interface PaneSpec {
++  id: string;
++  kind: Kind;
++  tile: Rect;
++  voice?: string; // a voice name or a choir pass stem
++  mode?: FaceMode;
++  body?: string;
++  strips?: boolean; // desk: with the voice strips
++  dim?: boolean; // a choir face: brightness follows its fader
++}
++interface Template {
++  name: string;
++  build: (t: number) => PaneSpec[];
++}
++const R = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h });
++/** the screens above a desk of height d */
++const topArea = (d: number) => R(10, 10, 1900, H - 20 - GAP - d);
++const deskArea = (d: number) => R(10, H - 10 - d, 1900, d);
++const face = (id: string, voice: string, tile: Rect, mode: FaceMode, body: string, dim = false): PaneSpec => ({ id, kind: "face", voice, tile, mode, body, dim });
++const bodyOf = (v: string) => (v === "high" || v === "lift" || v === "oohf" ? "female" : v === "octave" || v === "oohc" ? "child" : "male");
++
++/** split a rect into cols × rows cells with gaps */
++function cells(a: Rect, cols: number, rows: number): Rect[][] {
++  const cw = (a.w - GAP * (cols - 1)) / cols, ch = (a.h - GAP * (rows - 1)) / rows;
++  return Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => R(a.x + c * (cw + GAP), a.y + r * (ch + GAP), cw, ch)));
++}
++const span = (g: Rect[][], c: number, r: number, w: number, h: number): Rect => {
++  const a = g[r][c], b = g[r + h - 1][c + w - 1];
++  return R(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
++};
++/** a grid with some blocks placed; every other cell gets a choir pass, low pitches at the bottom */
++function mosaic(prefix: string, area: Rect, cols: number, rows: number, blocks: { voice: string; c: number; r: number; w: number; h: number; mode: FaceMode }[], choir: string[]): PaneSpec[] {
++  const g = cells(area, cols, rows);
++  const used = new Set<string>();
++  const out: PaneSpec[] = [];
++  for (const b of blocks) {
++    for (let r = b.r; r < b.r + b.h; r++) for (let c = b.c; c < b.c + b.w; c++) used.add(`${c},${r}`);
++    out.push(face(`${prefix}-${b.voice}`, b.voice, span(g, b.c, b.r, b.w, b.h), b.mode, bodyOf(b.voice)));
++  }
++  const free: Rect[] = [];
++  for (let r = rows - 1; r >= 0; r--) for (let c = 0; c < cols; c++) if (!used.has(`${c},${r}`)) free.push(g[r][c]);
++  free.forEach((cell, i) => {
++    const stem = choir[i % choir.length];
++    out.push(face(`${prefix}-c${i}`, stem, cell, "plain", M.pass.get(stem)!.body, true));
++  });
++  return out;
++}
++/** choir passes for a stretch of the song: the pitches whose faders go up in it, most-sung first, then by pitch */
++function choirFor(t0: number, t1: number, n: number, onePerPitch: boolean): string[] {
++  const f = M.file!;
++  const up = new Map<number, number>();
++  for (const [a, z, ps] of f.chords) {
++    const d = Math.min(z, t1) - Math.max(a, t0);
++    if (d > 0) for (const p of ps) up.set(p, (up.get(p) ?? 0) + d);
++  }
++  const cand = f.passes.filter((q) => up.has(q.midi) && (!onePerPitch || q.pass === 0));
++  cand.sort((a, b) => a.pass - b.pass || up.get(b.midi)! - up.get(a.midi)!);
++  return cand.slice(0, n).sort((a, b) => a.midi - b.midi || a.pass - b.pass).map((q) => q.stem);
++}
++
++function makeTemplates(): Record<string, Template> {
++  const verseDesk = (t: number) => 350 + 210 * leadRest(t);
++  const T: Record<string, Template> = {};
++  T.rack = { name: "rack", build: () => [{ id: "desk", kind: "desk", tile: R(10, 10, 1900, 1060), strips: false }] };
++  T.verse = {
++    name: "verse",
++    build: (t) => {
++      const d = verseDesk(t), top = topArea(d);
++      const rh = (top.h - GAP) / 2;
++      return [
++        face("lead", "lead", R(10, 10, 1050, top.h), "lead", "male"),
++        { id: "spec", kind: "spec", tile: R(1072, 10, 838, rh) },
++        { id: "folds", kind: "folds", tile: R(1072, 10 + rh + GAP, 838, rh) },
++        { id: "desk", kind: "desk", tile: deskArea(d), strips: true },
++      ];
++    },
++  };
++  T.lift = {
++    name: "lift",
++    build: (t) => {
++      const d = verseDesk(t), top = topArea(d);
++      const sh = Math.round(top.h * 0.38);
++      return [
++        face("lead", "lead", R(10, 10, 1050, top.h), "lead", "male"),
++        { id: "spec", kind: "spec", tile: R(1072, 10, 838, sh) },
++        face("lift", "lift", R(1072, 10 + sh + GAP, 838, top.h - sh - GAP), "glyph", "female"),
++        { id: "desk", kind: "desk", tile: deskArea(d), strips: true },
++      ];
++    },
++  };
++  T.ch1 = {
++    name: "ch1",
++    build: () => {
++      const d = 340, g = cells(topArea(d), 3, 1);
++      return [face("high", "high", g[0][0], "glyph", "female"), face("lead", "lead", g[0][1], "lead", "male"), face("low", "low", g[0][2], "glyph", "male"), { id: "desk", kind: "desk", tile: deskArea(d), strips: true }];
++    },
++  };
++  /** the lead in the middle column, two side mosaics */
++  const sides = (prefix: string, d: number, leadW: number, cols: number, rows: number, left: Parameters<typeof mosaic>[4], right: Parameters<typeof mosaic>[4], choir: string[]) => {
++    const top = topArea(d);
++    const sw = (top.w - leadW - 2 * GAP) / 2;
++    const la = R(top.x, top.y, sw, top.h), ca = R(top.x + sw + GAP, top.y, leadW, top.h), ra = R(top.x + sw + GAP + leadW + GAP, top.y, sw, top.h);
++    const nl = cols * rows - left.reduce((s, b) => s + b.w * b.h, 0), nr = cols * rows - right.reduce((s, b) => s + b.w * b.h, 0);
++    const ch = choir.length >= nl + nr ? choir : [...choir, ...choir];
++    // low pitches left, high pitches right: the left side takes the lower half of the list
++    return [
++      face(`${prefix}-lead`, "lead", ca, "lead", "male"),
++      ...mosaic(`${prefix}L`, la, cols, rows, left, ch.slice(0, nl)),
++      ...mosaic(`${prefix}R`, ra, cols, rows, right, ch.slice(nl, nl + nr)),
++      { id: `${prefix}-desk`, kind: "desk" as Kind, tile: deskArea(d), strips: true },
++    ];
++  };
++  T.ch2 = { name: "ch2", build: () => sides("ch2", 330, 640, 3, 3, [{ voice: "high", c: 1, r: 0, w: 2, h: 2, mode: "glyph" }], [{ voice: "low", c: 0, r: 0, w: 2, h: 2, mode: "glyph" }], choirFor(86.54, 100.87, 10, true)) };
++  T.ch3 = { name: "ch3", build: () => sides("ch3", 320, 640, 3, 4, [{ voice: "high", c: 1, r: 0, w: 2, h: 2, mode: "glyph" }], [{ voice: "low", c: 0, r: 0, w: 2, h: 2, mode: "glyph" }], choirFor(172.5, 183.6, 16, false)) };
++  T.bridge = {
++    name: "bridge",
++    build: () =>
++      sides(
++        "br",
++        300,
++        600,
++        4,
++        5,
++        [
++          { voice: "high", c: 2, r: 0, w: 2, h: 2, mode: "glyph" },
++          { voice: "octave", c: 2, r: 2, w: 2, h: 2, mode: "glyph" },
++        ],
++        [{ voice: "low", c: 0, r: 0, w: 2, h: 2, mode: "glyph" }],
++        choirFor(183.6, 198.3, 28, false),
++      ),
++  };
++  T.breakA = {
++    name: "breakA",
++    build: () => {
++      const d = 470, g = cells(topArea(d), 2, 1);
++      return [face("oohf", "oohf", g[0][0], "glyph", "female"), face("oohc", "oohc", g[0][1], "glyph", "child"), { id: "desk", kind: "desk", tile: deskArea(d), strips: true }];
++    },
++  };
++  T.breakB = {
++    name: "breakB",
++    build: () => {
++      const d = 330;
++      return [
++        ...mosaic(
++          "bb",
++          topArea(d),
++          6,
++          3,
++          [
++            { voice: "oohf", c: 1, r: 0, w: 2, h: 2, mode: "glyph" },
++            { voice: "oohc", c: 3, r: 0, w: 2, h: 2, mode: "glyph" },
++          ],
++          choirFor(120.4, 143.85, 10, true),
++        ),
++        { id: "desk", kind: "desk", tile: deskArea(d), strips: true },
++      ];
++    },
++  };
++  T.end = { name: "end", build: () => [{ id: "folds", kind: "folds", tile: R(10, 10, 1900, 1060) }] };
++  return T;
++}
++
++/** [time, template, wipe from the left?]: each layout change is a wipe that starts on a phrase boundary */
++const CUES: [number, string, boolean][] = [
++  [0, "rack", true],
++  [13.9, "verse", true],
++  [22.06, "lift", false],
++  [27.44, "verse", true],
++  [36.39, "lift", false],
++  [43.4, "ch1", true],
++  [57.88, "verse", false],
++  [65.05, "lift", false],
++  [70.42, "verse", true],
++  [79.38, "lift", false],
++  [86.3, "ch2", true],
++  [100.87, "breakA", false],
++  [120.4, "breakB", true],
++  [143.85, "verse", false],
++  [151.02, "lift", false],
++  [156.39, "verse", true],
++  [165.35, "lift", false],
++  [172.3, "ch3", true],
++  [182.7, "bridge", false],
++  [198.28, "verse", true],
++  [205.45, "end", false],
++];
++const WIPE = 0.95;
++
++let TEMPLATES: Record<string, Template> = {};
++
++/** the panes on screen at t: inside a wipe, the new layout left of the line and the old one right of it (or mirrored) */
++function panesAt(t: number): { key: string; spec: PaneSpec; clip: Rect }[] {
++  let i = 0;
++  while (i + 1 < CUES.length && CUES[i + 1][0] <= t) i++;
++  const [t0, name, fromLeft] = CUES[i];
++  const cur = TEMPLATES[name].build(t).map((s) => ({ key: `${name}:${s.id}`, spec: s }));
++  const u = i > 0 ? ease((t - t0) / WIPE) : 1;
++  if (u >= 1) return cur.map((p) => ({ ...p, clip: p.spec.tile }));
++  const prevName = CUES[i - 1][1];
++  const prev = TEMPLATES[prevName].build(t).map((s) => ({ key: `${prevName}:${s.id}`, spec: s }));
++  const line = fromLeft ? W * u : W * (1 - u);
++  const cut = (r: Rect, keepLeft: boolean): Rect => {
++    const x0 = keepLeft ? r.x : Math.max(r.x, line), x1 = keepLeft ? Math.min(r.x + r.w, line) : r.x + r.w;
++    return R(x0, r.y, Math.max(0, x1 - x0), r.h);
++  };
++  return [...cur.map((p) => ({ ...p, clip: cut(p.spec.tile, fromLeft) })), ...prev.map((p) => ({ ...p, clip: cut(p.spec.tile, !fromLeft) }))];
++}
++
++// ------------------------------------------------------------------ telemetry at t
++function tenorAt(t: number): Pass {
++  const f = M.file!;
++  const ch = f.chords.filter(([a]) => a <= t).pop();
++  const p = ch?.[2].find((m) => m >= 55 && m <= 59) ?? 57;
++  return f.passes.find((q) => q.midi === p && q.body === "male" && q.stem.endsWith("+0")) ?? f.passes.find((q) => q.midi === 57)!;
++}
++function replayFull(t: number): void {
++  const f = M.file;
++  if (!f) return;
++  const dt = M.lastT >= 0 && t > M.lastT ? Math.min(0.1, t - M.lastT) : 1 / 30;
++  M.lastT = t;
++  M.t = t;
++  for (const v of VOICES) {
++    const tr = M.tracks.get(v);
++    if (!tr) continue;
++    const msg = tr.message(tr.indexAt(t));
++    msg.t.clock = t;
++    M.msgs.set(v, msg);
++  }
++  for (const q of f.passes) {
++    const tr = M.tracks.get(q.stem);
++    if (!tr) continue;
++    // mix.py's tape loop: the render's 1.0–10.8 s spliced into a 9.4 s loop, started at the pass's offset
++    const lt = 1.0 + ((((q.off + t) % LOOP) + LOOP) % LOOP);
++    M.msgs.set(q.stem, tr.message(tr.indexAt(lt)));
++  }
++  const lead = M.msgs.get("lead")!;
++  let shown = lead;
++  if (t >= 205.45) {
++    // the end: the folds of the choir's tenor loop; over the last seconds the loop runs out through
++    // its own release, so the folds come to rest as the song ends
++    const q = tenorAt(t), tr = M.tracks.get(q.stem)!;
++    const lt = t < 221.6 ? 1.0 + ((((q.off + t) % LOOP) + LOOP) % LOOP) : 10.4 + ((t - 221.6) / 2.6) * 1.45;
++    shown = tr.message(tr.indexAt(lt));
++  }
++  engine.latest = shown;
++  (engine as unknown as { latestAt: number }).latestAt = performance.now();
++  analyser.pcm = M.pcm;
++  analyser.at = t * SR;
++  // the spectrum dims while the lead rests (its analyser would only show the noise floor)
++  const target = lead.t.voicing > 0.3 ? 1 : 0;
++  M.act += (target - M.act) * (1 - Math.exp(-dt / 0.2));
++
++  const on = new Set<string>();
++  for (const p of panesAt(t)) {
++    const el = document.getElementById(`fp-${p.key}`);
++    if (!el) continue;
++    const c = p.clip;
++    if (c.w < 1 || c.h < 1) continue;
++    on.add(p.key);
++    const s = p.spec, tile = s.tile;
++    Object.assign(el.style, { display: "block", left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
++    const frame = el.children[0] as HTMLElement, content = el.children[1] as HTMLElement;
++    Object.assign(frame.style, { left: `${tile.x - c.x}px`, top: `${tile.y - c.y}px`, width: `${tile.w}px`, height: `${tile.h}px` });
++    // a head sized by its body: inset in its tile, standing on the tile's floor
++    const k = s.kind === "face" && s.mode !== "lead" ? BODY_SCALE[s.body ?? "male"] : 1;
++    const cw = tile.w * k, chh = tile.h * k;
++    Object.assign(content.style, { left: `${tile.x + (tile.w - cw) / 2 - c.x}px`, top: `${tile.y + tile.h - chh - c.y}px`, width: `${cw}px`, height: `${chh}px` });
++    let op = 1;
++    if (s.dim && s.voice) op = 0.3 + 0.7 * faderAt(M.pass.get(s.voice)!.midi, t);
++    if (s.kind === "spec") op = 0.18 + 0.82 * M.act;
++    if (s.kind === "folds" && t > 223.4) op = clamp01((225 - t) / 1.6);
++    content.style.opacity = String(op);
++  }
++  for (const el of document.querySelectorAll<HTMLElement>(".fp-pane")) if (!on.has(el.dataset.key!)) el.style.display = "none";
++}
++
++declare global {
++  interface Window {
++    __replayFull?: (t: number) => void;
++  }
++}
++
++// ------------------------------------------------------------------ faces
++function syllableAt(notes: Note[] | undefined, t: number): { text: string; alpha: number } | null {
++  if (!notes) return null;
++  let last: Note | null = null;
++  for (const n of notes) {
++    if (n.t0 > t) break;
++    last = n;
++  }
++  if (!last) return null;
++  if (t <= last.t1) return { text: last.show, alpha: 1 };
++  const a = Math.exp(-(t - last.t1) / 0.3);
++  return a > 0.02 ? { text: last.show, alpha: a } : null;
++}
++const ascent = (s: string) => (s.includes("θ") ? 1.02 : /[bdfhklt]/.test(s) ? 0.76 : 0.52);
++const unitW = (ctx: CanvasRenderingContext2D, s: string) => [...s].reduce((acc, c) => acc + glyphW(ctx, c, 100) / 100 + 0.06, 0);
++
++/** the lead: its syllable in slot one, under the slot's label */
++function leadOverlay(voice: string): OverlayFn {
++  return (ctx, r, _m, _f, _a, { w, h }) => {
++    const s = syllableAt(M.file?.notes[voice], M.t);
++    if (!s) return;
++    const gx0 = r.X({ x: 3.35, y: 0 }), gy0 = r.Y({ x: 0, y: 2.05 });
++    const cellW = Math.max(60, (w - 14 - gx0) / 2);
++    const cellH = Math.max(56, Math.min(112, (h - 8 - gy0) / 2));
++    const big = Math.max(22, Math.min(44, cellH * 0.4, cellW * 0.32));
++    const base = gy0 + 18 + big * 1.1 + 12;
++    const size = Math.min(cellH * 0.95, (cellW - 18) / unitW(ctx, s.text), (base - gy0 - 16) / ascent(s.text));
++    drawIpa(ctx, gx0 + 2, base, s.text, size, COLOR[voice], s.alpha);
++  };
++}
++/** a harmony: its syllable in its colour, in the corner in front of the face */
++function cornerOverlay(voice: string): OverlayFn {
++  return (ctx, _r, _m, _f, _a, { w, h }) => {
++    const s = syllableAt(M.file?.notes[voice], M.t);
++    if (!s) return;
++    const size = Math.max(30, Math.min(h * 0.24, (w * 0.42) / unitW(ctx, s.text)));
++    const width = unitW(ctx, s.text) * size;
++    drawIpa(ctx, w - width - 12, h - 14, s.text, size, COLOR[voice], s.alpha);
++  };
++}
++const leadSlots: SlotsFn = (_m, a, f) => [
++  { label: "Syllable", value: "", color: V.white },
++  { label: "Jaw", value: a.jaw.toFixed(1), unit: "cm", color: V.red },
++  { label: "Lips", value: a.lipAp.toFixed(1), unit: "cm", color: V.pink },
++  f.velumPort > 0.02 ? { label: "Soft palate", value: f.velumPort.toFixed(2), unit: "cm²", color: V.white } : { label: "Soft palate", value: "Shut", color: V.white },
++];
++const none: SlotsFn = () => [];
++const noInfo = () => [];
++
++function Face(props: { voice: string; mode: FaceMode; body: string }) {
++  const v = props.voice;
++  const feed = useRef(() => M.msgs.get(v) ?? null).current;
++  const overlay = useRef(props.mode === "lead" ? leadOverlay(v) : props.mode === "glyph" ? cornerOverlay(v) : undefined).current;
++  const lead = props.mode === "lead";
++  return <AnatomyView body={BODY[props.body]} feed={feed} bare={!lead} slots={lead ? leadSlots : none} info={noInfo} showFormants={false} overlay={overlay} />;
++}
++
++// ------------------------------------------------------------------ the desk
++/** TubeView's drawing (rings sized by the area function, lit by pressure), stood upright: glottis at the bottom */
++function pipe(ctx: CanvasRenderingContext2D, msg: TelemetryMessage | undefined, cx: number, yTop: number, yBot: number, width: number, bright: number): void {
++  if (!msg) return;
++  const { phAreas: ph, orAreas: or, phLen, orLen, pressureRms: rms } = msg.t;
++  const nPh = ph.length, nOr = or.length, total = phLen + orLen;
++  const sy = (yBot - yTop) / total;
++  const dS = Math.min(width * 0.8, ((yBot - yTop) * 4) / 17) / 4;
++  const a2d = (A: number) => 2 * Math.sqrt(Math.max(0, A) / Math.PI);
++  const secs: { y: number; r: number; lv: number }[] = [];
++  for (let i = 0; i < nPh; i++) secs.push({ y: yBot - ((i + 0.5) / nPh) * phLen * sy, r: (a2d(ph[i]) * dS) / 2, lv: pressureLevel(rms[i]) });
++  for (let i = 0; i < nOr; i++) secs.push({ y: yBot - (phLen + ((i + 0.5) / nOr) * orLen) * sy, r: (a2d(or[i]) * dS) / 2, lv: pressureLevel(rms[nPh + i]) });
++  const left: Pt[] = [[cx - 2, yBot], ...secs.map((q) => [cx - q.r, q.y] as Pt), [cx - secs[secs.length - 1].r, yTop]];
++  const right: Pt[] = [[cx + 2, yBot], ...secs.map((q) => [cx + q.r, q.y] as Pt), [cx + secs[secs.length - 1].r, yTop]];
++  beamPts(ctx, left, V.blue, 1.1, { hot: bright > 0.6, alpha: 0.35 + 0.65 * bright });
++  beamPts(ctx, right, V.blue, 1.1, { hot: bright > 0.6, alpha: 0.35 + 0.65 * bright });
++  for (const q of secs) {
++    const lv = Math.pow(q.lv, 0.85);
++    const p = new Path2D();
++    p.ellipse(cx, q.y, Math.max(0.6, q.r), Math.max(0.5, q.r * 0.28), 0, 0, Math.PI * 2);
++    beam(ctx, p, heat(lv), 1, { alpha: (0.25 + 0.75 * lv) * (0.2 + 0.8 * bright) });
++  }
++}
++/** a fader: its track, the 0 dB and -24 dB marks, the cap at the level */
++function fader(ctx: CanvasRenderingContext2D, cx: number, yTop: number, yBot: number, width: number, pos: number, color: string): void {
++  seg(ctx, cx, yTop, cx, yBot, V.frame, 1.2);
++  for (const [u, len] of [[1, 0.32], [0.16, 0.22]] as const) {
++    const y = yBot - u * (yBot - yTop);
++    seg(ctx, cx - width * len, y, cx - width * len * 0.45, y, V.blueDim, 1);
++  }
++  const y = yBot - pos * (yBot - yTop);
++  const cw = Math.min(26, width * 0.5), ch = 7;
++  const cap = new Path2D();
++  cap.rect(cx - cw / 2, y - ch / 2, cw, ch);
++  beam(ctx, cap, color, 1.3, { hot: true });
++  seg(ctx, cx - cw / 2 + 3, y, cx + cw / 2 - 3, y, color, 1, { alpha: 0.9 });
++}
++function Desk(props: { strips: boolean }) {
++  const strips = props.strips;
++  const ref = usePhosphor(({ ctx, w, h }) => {
++    const f = M.file;
++    if (!f) return;
++    const t = M.t;
++    const nv = strips ? STRIPS.length : 0, np = f.pitches.length;
++    const unit = (w - (strips ? 18 : 0)) / (nv * 1.6 + np);
++    const tall = h > 600;
++    const fBot = h - 14, fTop = fBot - (tall ? h * 0.36 : h * 0.44);
++    const pBot = fTop - 14, pTop = tall ? Math.max(14, pBot - 620) : 12;
++    for (let i = 0; i < nv; i++) {
++      const name = STRIPS[i], sw = unit * 1.6, cx = i * sw + sw / 2;
++      const level = envAt(name, t);
++      if (name !== "kick" && name !== "whisper") pipe(ctx, M.msgs.get(name), cx, pTop, pBot, sw * 0.95, Math.min(1, level * 1.15));
++      fader(ctx, cx, fTop, fBot, sw, level, COLOR[name]);
++    }
++    const rx = nv * unit * 1.6 + (strips ? 18 : 0);
++    f.pitches.forEach((p, i) => {
++      const q = M.pass.get(f.passes.find((x) => x.midi === p.midi)!.stem)!;
++      const cx = rx + i * unit + unit / 2, pos = faderAt(p.midi, t);
++      pipe(ctx, M.msgs.get(q.stem), cx, pTop, pBot, unit * 0.95, pos * pos);
++      fader(ctx, cx, fTop, fBot, unit, pos, V.blue);
++    });
++  });
++  return <canvas ref={ref} className="instrument-canvas" />;
++}
++
++// ------------------------------------------------------------------ the page
++async function load(base: string): Promise<void> {
++  const get = async (p: string) => {
++    const r = await fetch(base + p);
++    if (!r.ok) throw new Error(`${p}: ${r.status}`);
++    return r.arrayBuffer();
++  };
++  const file = JSON.parse(new TextDecoder().decode(await get("full.json"))) as FullFile;
++  await Promise.all([...VOICES.map(async (v) => M.tracks.set(v, new TeleTrack(await get(`${v}.tele`)))), ...file.passes.map(async (q) => M.tracks.set(q.stem, new TeleTrack(await get(`${q.stem}.tele`))))]);
++  for (const p of file.pitches) M.fader.set(p.midi, p.fader);
++  for (const q of file.passes) M.pass.set(q.stem, q);
++  M.pcm = new Float32Array(await get("lead.f32"));
++  M.file = file;
++  TEMPLATES = makeTemplates();
++}
++
++const CSS = `
++html, body, #root { margin: 0; height: 100%; background: #000; overflow: hidden; }
++.fp { position: fixed; inset: 0; background: #000; }
++.fp-pane { position: absolute; overflow: hidden; display: none; }
++.fp-frame { position: absolute; box-sizing: border-box; border: 1px solid var(--frame); }
++.fp-frame.focus { border-color: var(--blue-dim); }
++.fp-content { position: absolute; }
++.fp-content > .anatomy { position: absolute; inset: 0; }
++.fp-content > .instrument-canvas { position: absolute; inset: 0; }
++.fp-content > .screen { position: absolute; inset: 0; border: 0; background: transparent; }
++.fp-content .screen-body { min-height: 0; }
++.fp-content .screen-head { display: none; }
++.fp-content .screen-body > .instrument-canvas { position: absolute; inset: 0; }
++`;
++
++export function FullPage(props: { id: string }) {
++  const [ready, setReady] = useState(false);
++  const [err, setErr] = useState<string | null>(null);
++  useEffect(() => {
++    useStore.setState({ started: true, mode: "play" });
++    (engine as unknown as { analyser: unknown }).analyser = analyser;
++    window.__replayFull = replayFull;
++    load(`${import.meta.env.BASE_URL}shows/${props.id}/`)
++      .then(() => setReady(true))
++      .catch((e: unknown) => setErr(String(e)));
++  }, [props.id]);
++  useEffect(() => {
++    if (!ready) return;
++    replayFull(Number(new URLSearchParams(location.search).get("t") ?? 0));
++    window.__replayReady = true;
++  }, [ready]);
++  if (err) return <p style={{ color: "#f55" }}>{err}</p>;
++  if (!ready) return null;
++  // every pane of every layout, mounted once (a pane off screen is display: none and draws nothing)
++  const all: { key: string; spec: PaneSpec }[] = [];
++  for (const [name, tp] of Object.entries(TEMPLATES)) for (const s of tp.build(0)) all.push({ key: `${name}:${s.id}`, spec: s });
++  return (
++    <div className="fp">
++      <style>{CSS}</style>
++      {all.map(({ key, spec }) => (
++        <div key={key} id={`fp-${key}`} data-key={key} className="fp-pane">
++          <div className={`fp-frame${spec.kind === "face" && spec.mode !== "plain" ? " focus" : ""}`} />
++          <div className="fp-content">
++            {spec.kind === "face" ? (
++              <Face voice={spec.voice!} mode={spec.mode!} body={spec.body!} />
++            ) : spec.kind === "desk" ? (
++              <Desk strips={!!spec.strips} />
++            ) : spec.kind === "spec" ? (
++              <Screen title="Spectrum">
++                <SpectrumView />
++              </Screen>
++            ) : (
++              <Screen title="Vocal folds" sub="Slowed 100×">
++                <Stroboscope />
++              </Screen>
++            )}
++          </div>
++        </div>
++      ))}
++    </div>
++  );
++}
+diff --git a/src/ui/components/MergedPage.tsx b/src/ui/components/MergedPage.tsx
+new file mode 100644
+index 0000000..33a8f3c
+--- /dev/null
++++ b/src/ui/components/MergedPage.tsx
+@@ -0,0 +1,409 @@
++/**
++ * LOCAL FILM PATCH (uncommitted): `?replay=merged&shot=merged`, the merged film's one wall.
++ * Every voice replays its own recorded telemetry: the lead (face, spectrum, folds), the double,
++ * the high / low / lift harmonies (their own faces, in their own bodies), and the tape-loop choir
++ * (one tube per pitch, at its exact tape position, on its real fader). The wall's layout is a
++ * function of song time: panels slide, split and resize on phrase boundaries.
++ * `window.__replayMerged(t)` sets song time t (telemetry and layout) before each virtual frame.
++ */
++import { useEffect, useRef, useState } from "react";
++import { engine } from "../../audio/AudioEngine.ts";
++import { useStore } from "../store.ts";
++import { TeleTrack } from "../../show/tele.ts";
++import { AnatomyView, type OverlayFn, type SlotsFn } from "./AnatomyView.tsx";
++import { Stroboscope } from "./Stroboscope.tsx";
++import { SpectrumView } from "./SpectrumView.tsx";
++import { Screen } from "./Screen.tsx";
++import { V, TEXT, heat, pressureLevel } from "../colors.ts";
++import { beam, beamPts, label, seg, type Pt } from "../render/vector.ts";
++import { usePhosphor } from "../usePhosphor.ts";
++import { analyser, drawIpa, glyphW } from "./ReplayPage.tsx";
++import type { TelemetryMessage } from "../../worklet/protocol.ts";
++import type { BodyMix } from "../../wasm/types.ts";
++
++interface Note {
++  midi: number;
++  t0: number;
++  t1: number;
++  show: string;
++}
++interface Pipe {
++  midi: number;
++  stem: string;
++  off: number;
++  loopLen: number;
++  fader: number[];
++}
++interface MergedFile {
++  fps: number;
++  choir: Pipe[];
++  notes: Record<string, Note[]>;
++  env: Record<string, number[]>;
++  envRate: number;
++  regions: Record<string, [number, number][]>;
++}
++
++const VOICES = ["lead", "double", "high", "low", "lift"] as const;
++type VoiceName = (typeof VOICES)[number];
++const COLOR: Record<VoiceName, string> = { lead: V.white, double: V.white, high: V.pink, low: V.green, lift: V.red };
++const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
++const W = 1920, H = 1080;
++
++const M: {
++  t: number;
++  file: MergedFile | null;
++  tracks: Map<string, TeleTrack>;
++  msgs: Map<string, TelemetryMessage>;
++  pcm: Float32Array | null;
++  layout: Layout;
++} = { t: 0, file: null, tracks: new Map(), msgs: new Map(), pcm: null, layout: null as unknown as Layout };
++
++// ------------------------------------------------------------------ layout over song time
++interface Rect {
++  x: number;
++  y: number;
++  w: number;
++  h: number;
++}
++type PanelId = "lead" | "high" | "low" | "lift" | "spec" | "folds" | "desk";
++/** a panel: the window it shows through (clip), and where its screen sits (content). A panel
++ *  appears or leaves by its window opening or closing over a screen that stays put, so nothing is
++ *  squeezed; only the lead face and the desk really change size. */
++interface Pane {
++  clip: Rect;
++  content: Rect;
++}
++interface Layout {
++  p: Record<PanelId, Pane>;
++  /** share of the desk's width given to the voice strips (the rest is the choir rack) */
++  voices: number;
++}
++const R = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h });
++const shown = (r: Rect): Pane => ({ clip: r, content: r });
++const closed = (content: Rect, side: "l" | "r" | "mid"): Pane => ({
++  clip: side === "l" ? R(content.x, content.y, 0, content.h) : side === "r" ? R(content.x + content.w, content.y, 0, content.h) : R(content.x, content.y + content.h / 2, content.w, 0),
++  content,
++});
++const LEAD_V = R(10, 10, 1050, 742), SPEC = R(1072, 10, 838, 365), FOLDS = R(1072, 387, 838, 365), LIFTR = FOLDS;
++const HIGH_C = R(10, 10, 626, 690), LEAD_C = R(648, 10, 624, 690), LOW_C = R(1284, 10, 626, 690);
++const BAND = R(10, 764, 1900, 306), BAND_C = R(10, 712, 1900, 358), FULL = R(10, 10, 1900, 1060);
++const VERSE: Layout = {
++  p: { lead: shown(LEAD_V), high: closed(HIGH_C, "l"), low: closed(LOW_C, "r"), lift: closed(R(1072, 312, 838, 440), "l"), spec: shown(SPEC), folds: shown(FOLDS), desk: shown(BAND) },
++  voices: 0.3,
++};
++const INTRO: Layout = { p: { ...VERSE.p, lead: closed(LEAD_V, "mid"), spec: closed(SPEC, "r"), folds: closed(FOLDS, "r"), desk: shown(FULL) }, voices: 0 };
++const WAKE: Layout = { ...INTRO, p: { ...INTRO.p, desk: shown(BAND) }, voices: 0.3 };
++const LIFT: Layout = { p: { ...VERSE.p, spec: shown(R(1072, 10, 838, 290)), folds: closed(FOLDS, "r"), lift: shown(R(1072, 312, 838, 440)) }, voices: 0.3 };
++const CHORUS: Layout = {
++  p: { ...VERSE.p, high: shown(HIGH_C), lead: shown(LEAD_C), low: shown(LOW_C), spec: closed(SPEC, "r"), folds: closed(FOLDS, "r"), desk: shown(BAND_C) },
++  voices: 0.3,
++};
++type Timing = Partial<Record<PanelId, [number, number]>>;
++/** [start, layout, seconds, per-panel share of the move]: each change starts on a phrase boundary */
++const CUES: [number, Layout, number, Timing][] = [
++  [0, INTRO, 0, {}],
++  [12.66, WAKE, 1.3, {}],
++  [13.9, VERSE, 1.3, { spec: [0.25, 1], folds: [0.35, 1] }],
++  [22.06, LIFT, 1.2, { spec: [0, 0.4], folds: [0, 0.55], lift: [0.3, 1] }],
++  [27.44, VERSE, 1.2, { lift: [0, 0.55], spec: [0.5, 1], folds: [0.3, 1] }],
++  [36.39, LIFT, 1.2, { spec: [0, 0.4], folds: [0, 0.55], lift: [0.3, 1] }],
++  [41.76, VERSE, 1.2, { lift: [0, 0.55], spec: [0.5, 1], folds: [0.3, 1] }],
++  [43.36, CHORUS, 1.7, { spec: [0, 0.45], folds: [0, 0.45], lead: [0.15, 1], high: [0.35, 1], low: [0.4, 1] }],
++  [57.88, VERSE, 1.7, { high: [0, 0.6], low: [0, 0.6], lead: [0.1, 0.9], spec: [0.5, 1], folds: [0.55, 1] }],
++];
++const ease = (u: number) => (u <= 0 ? 0 : u >= 1 ? 1 : u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
++const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
++const lerpR = (a: Rect, b: Rect, u: number): Rect => ({ x: lerp(a.x, b.x, u), y: lerp(a.y, b.y, u), w: lerp(a.w, b.w, u), h: lerp(a.h, b.h, u) });
++function layoutAt(t: number): Layout {
++  let prev = CUES[0][1], cur = CUES[0][1], f = 1, timing: Timing = {};
++  for (let i = 1; i < CUES.length; i++) {
++    const [t0, l, d, tm] = CUES[i];
++    if (t < t0) break;
++    prev = cur;
++    cur = l;
++    f = (t - t0) / d;
++    timing = tm;
++  }
++  const p = {} as Record<PanelId, Pane>;
++  for (const k of Object.keys(cur.p) as PanelId[]) {
++    const [s0, s1] = timing[k] ?? [0, 1];
++    const u = ease((f - s0) / (s1 - s0));
++    p[k] = { clip: lerpR(prev.p[k].clip, cur.p[k].clip, u), content: lerpR(prev.p[k].content, cur.p[k].content, u) };
++  }
++  return { p, voices: lerp(prev.voices, cur.voices, ease(f)) };
++}
++
++// ------------------------------------------------------------------ telemetry at t
++function replayMerged(t: number): void {
++  M.t = t;
++  const f = M.file;
++  if (!f) return;
++  for (const v of VOICES) {
++    const tr = M.tracks.get(v);
++    if (!tr) continue;
++    const msg = tr.message(tr.indexAt(t));
++    msg.t.clock = t;
++    M.msgs.set(v, msg);
++  }
++  for (const p of f.choir) {
++    const tr = M.tracks.get(p.stem);
++    if (!tr) continue;
++    // mix.py's tape loop: the render's 1.0–10.8 s, spliced into a 9.4 s loop, started at its offset
++    const lt = 1.0 + ((((p.off + t) % p.loopLen) + p.loopLen) % p.loopLen);
++    M.msgs.set(p.stem, tr.message(tr.indexAt(lt)));
++  }
++  const lead = M.msgs.get("lead");
++  if (lead) {
++    engine.latest = lead;
++    (engine as unknown as { latestAt: number }).latestAt = performance.now();
++  }
++  analyser.pcm = M.pcm;
++  analyser.at = t * 48000;
++  M.layout = layoutAt(t);
++  for (const id of Object.keys(M.layout.p) as PanelId[]) {
++    const el = document.getElementById(`mp-${id}`);
++    const inner = el?.firstElementChild as HTMLElement | null;
++    if (!el || !inner) continue;
++    const { clip: c, content: q } = M.layout.p[id];
++    el.style.display = c.w < 1 || c.h < 1 ? "none" : "";
++    Object.assign(el.style, { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
++    Object.assign(inner.style, { left: `${q.x - c.x}px`, top: `${q.y - c.y}px`, width: `${q.w}px`, height: `${q.h}px` });
++  }
++}
++
++declare global {
++  interface Window {
++    __replayMerged?: (t: number) => void;
++  }
++}
++
++/** a 10 Hz level from film/env.json at t */
++function envAt(name: string, t: number): number {
++  const f = M.file;
++  const a = f?.env[name];
++  if (!a) return 0;
++  const x = t * f!.envRate, i = Math.floor(x);
++  if (i < 0) return 0;
++  if (i >= a.length - 1) return a[a.length - 1];
++  return a[i] + (a[i + 1] - a[i]) * (x - i);
++}
++function faderAt(p: Pipe, t: number): number {
++  const fps = M.file!.fps, x = t * fps, i = Math.min(p.fader.length - 2, Math.max(0, Math.floor(x)));
++  return p.fader[i] + (p.fader[i + 1] - p.fader[i]) * Math.min(1, Math.max(0, x - i));
++}
++
++// ------------------------------------------------------------------ the faces
++function syllableAt(notes: Note[], t: number): { text: string; alpha: number } | null {
++  let last: Note | null = null;
++  for (const n of notes) {
++    if (n.t0 > t) break;
++    last = n;
++  }
++  if (!last) return null;
++  if (t <= last.t1) return { text: last.show, alpha: 1 };
++  const a = Math.exp(-(t - last.t1) / 0.3);
++  return a > 0.02 ? { text: last.show, alpha: a } : null;
++}
++/** the tallest stroke above the baseline, as a share of the glyph size */
++const ascent = (s: string) => (s.includes("θ") ? 1.02 : /[bdfhklt]/.test(s) ? 0.76 : 0.52);
++
++function syllableOverlay(voice: VoiceName): OverlayFn {
++  return (ctx, r, _m, _f, _a, { w, h }) => {
++    const notes = M.file?.notes[voice];
++    const s = notes && syllableAt(notes, M.t);
++    if (!s) return;
++    const gx0 = r.X({ x: 3.35, y: 0 }), gy0 = r.Y({ x: 0, y: 2.05 });
++    const cellW = Math.max(60, (w - 14 - gx0) / 2);
++    const cellH = Math.max(56, Math.min(112, (h - 8 - gy0) / 2));
++    const big = Math.max(22, Math.min(44, cellH * 0.4, cellW * 0.32));
++    const base = gy0 + 18 + big * 1.1 + 12;
++    const unit = [...s.text].reduce((acc, c) => acc + glyphW(ctx, c, 100) / 100 + 0.06, 0);
++    // as big as slot one holds: under its label, and up to the next slot
++    const size = Math.min(cellH * 0.95, (cellW - 18) / unit, (base - gy0 - 16) / ascent(s.text));
++    drawIpa(ctx, gx0 + 2, base, s.text, size, COLOR[voice], s.alpha);
++  };
++}
++function slotsFor(voice: VoiceName): SlotsFn {
++  return (_m, a, f) => [
++    { label: voice === "lead" ? "Syllable" : `${voice} · syllable`, value: "", color: COLOR[voice] },
++    { label: "Jaw", value: a.jaw.toFixed(1), unit: "cm", color: V.red },
++    { label: "Lips", value: a.lipAp.toFixed(1), unit: "cm", color: V.pink },
++    f.velumPort > 0.02 ? { label: "Soft palate", value: f.velumPort.toFixed(2), unit: "cm²", color: V.white } : { label: "Soft palate", value: "Shut", color: V.white },
++  ];
++}
++const noInfo = () => [];
++
++function Face(props: { voice: VoiceName; body: BodyMix }) {
++  const v = props.voice;
++  const feed = useRef(() => M.msgs.get(v) ?? null).current;
++  const overlay = useRef(syllableOverlay(v)).current;
++  const slots = useRef(slotsFor(v)).current;
++  return (
++    <div id={`mp-${v}`} className="mp-clip">
++      <div className="mp-inner">
++        <section className="screen focus" aria-label={`${v} voice`}>
++          <div className="screen-body">
++            <AnatomyView body={props.body} feed={feed} slots={slots} info={noInfo} overlay={overlay} />
++          </div>
++        </section>
++      </div>
++    </div>
++  );
++}
++
++// ------------------------------------------------------------------ the desk: a strip per voice, a rack of tape loops
++/** TubeView's drawing (rings sized by the area function, lit by pressure), stood upright: glottis at the bottom */
++function pipe(ctx: CanvasRenderingContext2D, msg: TelemetryMessage | undefined, cx: number, yTop: number, yBot: number, width: number, bright: number): void {
++  if (!msg) return;
++  const { phAreas: ph, orAreas: or, phLen, orLen, pressureRms: rms } = msg.t;
++  const nPh = ph.length, nOr = or.length, total = phLen + orLen;
++  const sy = (yBot - yTop) / total;
++  const dS = Math.min(width * 0.8, ((yBot - yTop) * 4) / 17) / 4; // true proportions, up to 80% of the strip
++  const a2d = (A: number) => 2 * Math.sqrt(Math.max(0, A) / Math.PI);
++  const secs: { y: number; r: number; lv: number }[] = [];
++  for (let i = 0; i < nPh; i++) secs.push({ y: yBot - ((i + 0.5) / nPh) * phLen * sy, r: (a2d(ph[i]) * dS) / 2, lv: pressureLevel(rms[i]) });
++  for (let i = 0; i < nOr; i++) secs.push({ y: yBot - (phLen + ((i + 0.5) / nOr) * orLen) * sy, r: (a2d(or[i]) * dS) / 2, lv: pressureLevel(rms[nPh + i]) });
++  const left: Pt[] = [[cx - 2, yBot], ...secs.map((q) => [cx - q.r, q.y] as Pt), [cx - secs[secs.length - 1].r, yTop]];
++  const right: Pt[] = [[cx + 2, yBot], ...secs.map((q) => [cx + q.r, q.y] as Pt), [cx + secs[secs.length - 1].r, yTop]];
++  beamPts(ctx, left, V.blue, 1.1, { hot: bright > 0.6, alpha: 0.35 + 0.65 * bright });
++  beamPts(ctx, right, V.blue, 1.1, { hot: bright > 0.6, alpha: 0.35 + 0.65 * bright });
++  for (const q of secs) {
++    const lv = Math.pow(q.lv, 0.85);
++    const p = new Path2D();
++    p.ellipse(cx, q.y, Math.max(0.6, q.r), Math.max(0.5, q.r * 0.28), 0, 0, Math.PI * 2);
++    beam(ctx, p, heat(lv), 1, { alpha: (0.25 + 0.75 * lv) * (0.2 + 0.8 * bright) });
++  }
++}
++
++/** a fader: its track, the 0 dB and -24 dB marks, the cap at the measured level */
++function fader(ctx: CanvasRenderingContext2D, cx: number, yTop: number, yBot: number, width: number, pos: number, color: string): void {
++  seg(ctx, cx, yTop, cx, yBot, V.frame, 1.2);
++  for (const [u, len] of [[1, 0.32], [0.16, 0.22]] as const) {
++    const y = yBot - u * (yBot - yTop);
++    seg(ctx, cx - width * len, y, cx - width * len * 0.45, y, V.blueDim, 1);
++  }
++  const y = yBot - pos * (yBot - yTop);
++  const cw = Math.min(26, width * 0.42), ch = 7;
++  const cap = new Path2D();
++  cap.rect(cx - cw / 2, y - ch / 2, cw, ch);
++  beam(ctx, cap, color, 1.3, { hot: true });
++  seg(ctx, cx - cw / 2 + 3, y, cx + cw / 2 - 3, y, color, 1, { alpha: 0.9 });
++}
++
++function Desk() {
++  const ref = usePhosphor(({ ctx, w, h }) => {
++    const f = M.file;
++    if (!f) return;
++    const t = M.t;
++    const vw = w * M.layout.voices;
++    const strips: { name: string; color: string; msg?: TelemetryMessage; level: number; bright: number; x: number; sw: number }[] = [];
++    if (vw > 4) {
++      const sw = vw / VOICES.length;
++      VOICES.forEach((v, i) => {
++        const level = envAt(v, t);
++        strips.push({ name: v.toUpperCase(), color: COLOR[v], msg: M.msgs.get(v), level, bright: Math.min(1, level * 1.15), x: i * sw, sw });
++      });
++    }
++    const rw = w - vw - (vw > 4 ? 14 : 0), rx = w - rw;
++    const n = f.choir.length, sw = rw / n;
++    f.choir.forEach((p, i) => {
++      const pos = faderAt(p, t);
++      strips.push({ name: `${NAMES[p.midi % 12]}${Math.floor(p.midi / 12) - 1}`, color: V.blue, msg: M.msgs.get(p.stem), level: pos, bright: pos * pos, x: rx + i * sw, sw });
++    });
++    if (vw > 4) seg(ctx, vw + 7, 10, vw + 7, h - 10, V.frame, 1);
++    // tall desk (the intro): long pipes over short faders; short desk: the pipe takes the strip's top half
++    const labelY = h - 8;
++    const fBot = h - 26, fTop = fBot - (h > 600 ? h * 0.36 : Math.max(40, Math.min(170, h * 0.24)));
++    const pBot = fTop - 18, pTop = h > 600 ? Math.max(16, pBot - 620) : 16;
++    for (const s of strips) {
++      const cx = s.x + s.sw / 2;
++      pipe(ctx, s.msg, cx, pTop, pBot, s.sw * 0.95, s.bright);
++      fader(ctx, cx, fTop, fBot, s.sw, s.level, s.color);
++      label(ctx, s.name, cx, labelY, { size: s.sw < 70 ? 8 : 9, color: s.color === V.blue ? TEXT.secondary : s.color, align: "center", ls: 0.12, alpha: 0.75 });
++    }
++  });
++  return (
++    <div id="mp-desk" className="mp-clip">
++      <div className="mp-inner">
++        <section className="screen" aria-label="Desk">
++          <div className="screen-body">
++            <canvas ref={ref} className="instrument-canvas" />
++          </div>
++        </section>
++      </div>
++    </div>
++  );
++}
++
++// ------------------------------------------------------------------ the page
++async function load(base: string): Promise<void> {
++  const get = async (p: string) => {
++    const r = await fetch(base + p);
++    if (!r.ok) throw new Error(`${p}: ${r.status}`);
++    return r.arrayBuffer();
++  };
++  const file = JSON.parse(new TextDecoder().decode(await get("merged.json"))) as MergedFile;
++  for (const v of VOICES) M.tracks.set(v, new TeleTrack(await get(`${v}.tele`)));
++  for (const p of file.choir) M.tracks.set(p.stem, new TeleTrack(await get(`${p.stem}.tele`)));
++  M.pcm = new Float32Array(await get("lead.f32"));
++  M.file = file;
++}
++
++const CSS = `
++html, body, #root { margin: 0; height: 100%; background: #000; overflow: hidden; }
++.mp { position: fixed; inset: 0; background: #000; }
++.mp-clip { position: absolute; overflow: hidden; }
++.mp-inner { position: absolute; }
++.mp-inner > .screen { position: absolute; inset: 0; box-sizing: border-box; }
++.mp-inner > .screen > .screen-body { position: absolute; inset: 0; min-height: 0; }
++.mp-titled > .screen > .screen-body { position: relative; inset: auto; flex: 1 1 auto; }
++.mp-inner .instrument-canvas { position: absolute; inset: 0; }
++`;
++
++export function MergedPage(props: { id: string }) {
++  const [ready, setReady] = useState(false);
++  const [err, setErr] = useState<string | null>(null);
++  useEffect(() => {
++    useStore.setState({ started: true, mode: "play" });
++    (engine as unknown as { analyser: unknown }).analyser = analyser;
++    window.__replayMerged = replayMerged;
++    load(`${import.meta.env.BASE_URL}shows/${props.id}/`)
++      .then(() => {
++        M.layout = layoutAt(0);
++        setReady(true);
++      })
++      .catch((e: unknown) => setErr(String(e)));
++  }, [props.id]);
++  useEffect(() => {
++    if (!ready) return;
++    replayMerged(Number(new URLSearchParams(location.search).get("t") ?? 0));
++    window.__replayReady = true;
++  }, [ready]);
++  if (err) return <p style={{ color: "#f55" }}>{err}</p>;
++  if (!ready) return null;
++  const body = (v: VoiceName) => M.tracks.get(v)!.body;
++  return (
++    <div className="mp">
++      <style>{CSS}</style>
++      <Desk />
++      <Face voice="high" body={body("high")} />
++      <Face voice="low" body={body("low")} />
++      <Face voice="lead" body={body("lead")} />
++      <Face voice="lift" body={body("lift")} />
++      <div id="mp-spec" className="mp-clip">
++        <div className="mp-inner mp-titled">
++          <Screen title="Spectrum">
++            <SpectrumView />
++          </Screen>
++        </div>
++      </div>
++      <div id="mp-folds" className="mp-clip">
++        <div className="mp-inner mp-titled">
++          <Screen title="Vocal folds" sub="Slowed 100×">
++            <Stroboscope />
++          </Screen>
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/ui/components/ReplayPage.tsx b/src/ui/components/ReplayPage.tsx
+new file mode 100644
+index 0000000..a953f30
+--- /dev/null
++++ b/src/ui/components/ReplayPage.tsx
+@@ -0,0 +1,320 @@
++/**
++ * LOCAL FILM PATCH (uncommitted): `?replay=<id>&shot=<wall|folds|tube>` replays recorded voice
++ * telemetry through the Play screen's own instruments (face, tube, folds, spectrum, vowels, pitch).
++ * Nothing is synthesized: `window.__replay(t)` (called by the capture script before each virtual
++ * frame) puts the recorded frame at song time t into `engine.latest`, as the worklet would, and a
++ * stand-in analyser reads the rendered voice's samples at t for the spectrum's harmonic stems.
++ *
++ * public/shows/<id>/replay.json: { leadFrom, firstChord, tenor: [[t0, t1, midi]], notes: [{midi, t0, t1, show}] }
++ * with lead.tele/lead.f32 and loop<midi>.tele/.f32 (mono float32, 48 kHz) beside it.
++ */
++import { useEffect, useState } from "react";
++import { engine } from "../../audio/AudioEngine.ts";
++import { useStore } from "../store.ts";
++import { TeleTrack } from "../../show/tele.ts";
++import { AnatomyView, type OverlayFn, type SlotsFn } from "./AnatomyView.tsx";
++import { TubeView } from "./TubeView.tsx";
++import { Stroboscope } from "./Stroboscope.tsx";
++import { SpectrumView } from "./SpectrumView.tsx";
++import { VowelMap } from "./VowelMap.tsx";
++import { PianoRoll } from "./PianoRoll.tsx";
++import { Screen } from "./Screen.tsx";
++import { roll } from "../singing.ts";
++import { V } from "../colors.ts";
++import { hfont, ipaGlyph } from "../render/vector.ts";
++
++interface Note {
++  midi: number;
++  t0: number;
++  t1: number;
++  show: string;
++}
++interface ReplayFile {
++  leadFrom: number;
++  firstChord: number;
++  tenor: [number, number, number][];
++  notes: Note[];
++}
++interface Voice {
++  track: TeleTrack;
++  pcm: Float32Array;
++}
++
++const SR = 48000;
++
++/** Web Audio's AnalyserNode, computed from a rendered voice at the replay's playhead instead of live */
++export class ReplayAnalyser {
++  readonly fftSize = 4096;
++  readonly frequencyBinCount = 2048;
++  readonly smoothingTimeConstant = 0.6;
++  pcm: Float32Array | null = null;
++  at = 0;
++  private prev = new Float32Array(2048);
++  private re = new Float64Array(4096);
++  private im = new Float64Array(4096);
++  private win = Float64Array.from({ length: 4096 }, (_, i) => {
++    const a = (2 * Math.PI * i) / 4096;
++    return 0.42 - 0.5 * Math.cos(a) + 0.08 * Math.cos(2 * a);
++  });
++  getFloatFrequencyData(out: Float32Array): void {
++    const N = this.fftSize, re = this.re, im = this.im;
++    const x = this.pcm;
++    const end = Math.floor(this.at);
++    for (let i = 0; i < N; i++) {
++      const k = end - N + i;
++      re[i] = x && k >= 0 && k < x.length ? x[k] * this.win[i] : 0;
++      im[i] = 0;
++    }
++    fft(re, im);
++    const tau = this.smoothingTimeConstant;
++    for (let k = 0; k < this.frequencyBinCount; k++) {
++      const mag = Math.hypot(re[k], im[k]) / N;
++      const s = (this.prev[k] = tau * this.prev[k] + (1 - tau) * mag);
++      out[k] = s > 0 ? 20 * Math.log10(s) : -200;
++    }
++  }
++}
++
++function fft(re: Float64Array, im: Float64Array): void {
++  const n = re.length;
++  for (let i = 1, j = 0; i < n; i++) {
++    let bit = n >> 1;
++    for (; j & bit; bit >>= 1) j ^= bit;
++    j ^= bit;
++    if (i < j) {
++      [re[i], re[j]] = [re[j], re[i]];
++      [im[i], im[j]] = [im[j], im[i]];
++    }
++  }
++  for (let len = 2; len <= n; len <<= 1) {
++    const ang = (-2 * Math.PI) / len;
++    const wr = Math.cos(ang), wi = Math.sin(ang);
++    for (let i = 0; i < n; i += len) {
++      let cr = 1, ci = 0;
++      for (let k = 0; k < len / 2; k++) {
++        const a = i + k, b = a + len / 2;
++        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
++        re[b] = re[a] - tr;
++        im[b] = im[a] - ti;
++        re[a] += tr;
++        im[a] += ti;
++        const nr = cr * wr - ci * wi;
++        ci = cr * wi + ci * wr;
++        cr = nr;
++      }
++    }
++  }
++}
++
++export const analyser = new ReplayAnalyser();
++const state: { t: number; file: ReplayFile | null; lead: Voice | null; loops: Map<number, Voice> } = { t: 0, file: null, lead: null, loops: new Map() };
++
++/** which recording sings at song time t, and where in it: the tenor choir loop of the chord, then the lead */
++function sourceAt(t: number): { v: Voice; lt: number } | null {
++  const f = state.file;
++  if (!f || !state.lead) return null;
++  if (t >= f.leadFrom) return { v: state.lead, lt: t };
++  const ch = f.tenor.find(([a, z]) => t >= a && t < z) ?? f.tenor[0];
++  const v = state.loops.get(ch[2]);
++  if (!v) return null;
++  // the loop's own onset on the first chord, then its steady middle, looped as the tape loop is
++  let lt = Math.max(0, t - f.firstChord);
++  if (lt > 10.4) lt = 1.0 + ((lt - 1.0) % 9.4);
++  return { v, lt };
++}
++
++/** put the recorded frame at song time t where the worklet's telemetry would go */
++function replayAt(t: number): void {
++  state.t = t;
++  const s = sourceAt(t);
++  if (!s) return;
++  const msg = s.v.track.message(s.v.track.indexAt(s.lt));
++  msg.t.clock = t;
++  engine.latest = msg;
++  (engine as unknown as { latestAt: number }).latestAt = performance.now();
++  analyser.pcm = s.v.pcm;
++  analyser.at = s.lt * SR;
++}
++
++declare global {
++  interface Window {
++    __replay?: (t: number) => void;
++    __replayReady?: boolean;
++  }
++}
++
++/** the syllable on the readout at t: lit while its note sounds, then fading like phosphor */
++function syllableAt(t: number): { text: string; alpha: number } | null {
++  const f = state.file;
++  if (!f) return null;
++  if (t < f.leadFrom) return t >= f.firstChord ? { text: "ɑ", alpha: Math.min(1, (t - f.firstChord) / 0.6) } : null;
++  let last: Note | null = null;
++  for (const n of f.notes) {
++    if (n.t0 > t) break;
++    last = n;
++  }
++  if (!last) return null;
++  if (t <= last.t1) return { text: last.show, alpha: 1 };
++  const a = Math.exp(-(t - last.t1) / 0.3);
++  return a > 0.02 ? { text: last.show, alpha: a } : null;
++}
++
++/** glyph width as ipaGlyph draws it: font letters measured, stroke vowels about half the size */
++const STROKED = new Set(["ɑ", "ɒ", "ɪ", "ɛ", "ɜ", "ɝ", "ʊ", "ʌ", "ɤ", "ʃ", "θ", "ŋ", "ə", "ɚ", "ɹ", "ʒ"]);
++export function glyphW(ctx: CanvasRenderingContext2D, ch: string, size: number): number {
++  if (STROKED.has(ch)) return size * (ch === "ŋ" || ch === "θ" ? 0.55 : 0.5);
++  ctx.save();
++  ctx.font = hfont(size);
++  const w = ctx.measureText(ch).width;
++  ctx.restore();
++  return w;
++}
++
++/** IPA a syllable at a time; the few symbols the kit lacks are drawn as strokes here */
++export function drawIpa(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, size: number, color: string, alpha: number): void {
++  const chars = [...text];
++  const gap = size * 0.06;
++  const ws = chars.map((c) => glyphW(ctx, c, size));
++  let cx = x;
++  chars.forEach((c, i) => {
++    const mid = cx + ws[i] / 2;
++    const xh = size * 0.5, r = xh * 0.48, cy = y - xh / 2;
++    const stroke = (d: string) => {
++      ctx.save();
++      ctx.globalCompositeOperation = "lighter";
++      ctx.globalAlpha = alpha;
++      ctx.strokeStyle = color;
++      ctx.lineWidth = Math.max(0.9, size * 0.07);
++      ctx.lineCap = "round";
++      ctx.lineJoin = "round";
++      ctx.stroke(new Path2D(d));
++      ctx.restore();
++    };
++    if (c === "ɚ") {
++      ipaGlyph(ctx, mid, y, "ə", size, color, alpha);
++      stroke(`M${mid + r * 0.85} ${cy - xh * 0.15}Q${mid + r * 1.5} ${cy - xh * 0.55} ${mid + r * 1.6} ${cy - xh * 0.2}`);
++    } else if (c === "ɹ") {
++      stroke(`M${mid + r * 0.7} ${y - xh}L${mid + r * 0.7} ${y}M${mid + r * 0.7} ${y - xh * 0.4}Q${mid} ${y + xh * 0.05} ${mid - r * 0.8} ${y - xh * 0.15}`);
++    } else if (c === "ʒ") {
++      stroke(`M${mid - r} ${y - xh}L${mid + r} ${y - xh}L${mid - r * 0.1} ${cy}Q${mid + r * 1.2} ${cy} ${mid + r * 0.9} ${y + xh * 0.35}Q${mid + r * 0.4} ${y + xh * 0.95} ${mid - r} ${y + xh * 0.6}`);
++    } else if (/[a-z]/.test(c)) {
++      // a Hershey letter, thickened to the stroke weight of the drawn IPA vowels beside it
++      ctx.save();
++      ctx.globalCompositeOperation = "lighter";
++      ctx.globalAlpha = alpha;
++      ctx.font = hfont(size);
++      ctx.textAlign = "center";
++      ctx.fillStyle = ctx.strokeStyle = color;
++      ctx.lineWidth = size * 0.05;
++      ctx.lineJoin = ctx.lineCap = "round" as CanvasLineJoin & CanvasLineCap;
++      ctx.fillText(c, mid, y);
++      ctx.strokeText(c, mid, y);
++      ctx.restore();
++    } else ipaGlyph(ctx, mid, y, c, size, color, alpha);
++    cx += ws[i] + gap;
++  });
++}
++
++/** where drawReadouts puts the slot grid (same arithmetic), so the syllable lands in slot one */
++const syllableOverlay: OverlayFn = (ctx, r, _m, _f, _a, { w, h }) => {
++  const s = syllableAt(state.t);
++  if (!s) return;
++  const gx0 = r.X({ x: 3.35, y: 0 }), gy0 = r.Y({ x: 0, y: 2.05 });
++  const cellW = Math.max(60, (w - 14 - gx0) / 2);
++  const cellH = Math.max(56, Math.min(112, (h - 8 - gy0) / 2));
++  const big = Math.max(22, Math.min(44, cellH * 0.4, cellW * 0.32));
++  // as big as slot one holds: its cell's height, and its width up to the next slot
++  const unit = [...s.text].reduce((acc, c) => acc + glyphW(ctx, c, 100) / 100 + 0.06, 0);
++  const size = Math.min(cellH * 0.95, (cellW - 18) / unit);
++  drawIpa(ctx, gx0 + 2, gy0 + 18 + big * 1.1 + size * 0.12, s.text, size, V.green, s.alpha);
++};
++
++/** Play's slots, with the first one holding the syllable being sung */
++const replaySlots: SlotsFn = (_m, a, f) => [
++  { label: "Syllable", value: "", color: V.green },
++  { label: "Jaw", value: a.jaw.toFixed(1), unit: "cm", color: V.red },
++  { label: "Lips", value: a.lipAp.toFixed(1), unit: "cm", color: V.pink },
++  f.velumPort > 0.02 ? { label: "Soft palate", value: f.velumPort.toFixed(2), unit: "cm²", color: V.white } : { label: "Soft palate", value: "Shut", color: V.white },
++];
++const noInfo = () => [];
++
++async function load(base: string): Promise<void> {
++  const get = async (p: string) => {
++    const r = await fetch(base + p);
++    if (!r.ok) throw new Error(`${p}: ${r.status}`);
++    return r.arrayBuffer();
++  };
++  const file = JSON.parse(new TextDecoder().decode(await get("replay.json"))) as ReplayFile;
++  const voice = async (stem: string): Promise<Voice> => ({ track: new TeleTrack(await get(stem + ".tele")), pcm: new Float32Array(await get(stem + ".f32")) });
++  state.lead = await voice("lead");
++  for (const p of new Set(file.tenor.map((c) => c[2]))) state.loops.set(p, await voice(`loop${p}`));
++  state.file = file;
++  roll.notes = file.notes.map((n) => ({ midi: n.midi, t0: n.t0, t1: n.t1, text: "", demo: false }));
++}
++
++const CSS = `
++html, body, #root { margin: 0; height: 100%; background: #000; overflow: hidden; }
++.rp-solo { position: fixed; inset: 0; background: #000; }
++.rp-wall { position: fixed; inset: 0; padding: 10px; box-sizing: border-box; display: grid; gap: 12px; grid-template-columns: minmax(0, 700fr) minmax(0, 696fr); background: #000; }
++.rp-right { display: grid; gap: 12px; min-height: 0; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr); grid-template-areas: "tube folds" "spec spec" "vowels roll"; }
++.rp-right .screen-body { min-height: 0; }
++.rp-right .roll-canvas, .rp-right .vowel-map { height: 100%; min-height: 0; position: absolute; inset: 0; }
++.rp-tube { grid-area: tube; } .rp-folds { grid-area: folds; } .rp-spec { grid-area: spec; } .rp-vowels { grid-area: vowels; } .rp-roll { grid-area: roll; }
++.rp-right .instrument-canvas { position: absolute; inset: 0; }
++`;
++
++export function ReplayPage(props: { id: string; shot: string }) {
++  const [ready, setReady] = useState(false);
++  const [err, setErr] = useState<string | null>(null);
++  useEffect(() => {
++    useStore.setState({ started: true, mode: "play" });
++    (engine as unknown as { analyser: unknown }).analyser = analyser;
++    window.__replay = replayAt;
++    load(`${import.meta.env.BASE_URL}shows/${props.id}/`)
++      .then(() => {
++        replayAt(Number(new URLSearchParams(location.search).get("t") ?? 0));
++        setReady(true);
++        window.__replayReady = true;
++      })
++      .catch((e: unknown) => setErr(String(e)));
++  }, [props.id]);
++  if (err) return <p style={{ color: "#f55" }}>{err}</p>;
++  if (!ready) return null;
++  return (
++    <>
++      <style>{CSS}</style>
++      {props.shot === "folds" ? (
++        <div className="rp-solo">
++          <Stroboscope />
++        </div>
++      ) : props.shot === "tube" ? (
++        <div className="rp-solo">
++          <TubeView />
++        </div>
++      ) : (
++        <div className="rp-wall">
++          <Screen className="left" focus label="Live vocal tract">
++            <AnatomyView slots={replaySlots} info={noInfo} overlay={syllableOverlay} />
++          </Screen>
++          <div className="rp-right">
++            <Screen className="rp-tube" title="Tube" sub="Glottis to lips">
++              <TubeView />
++            </Screen>
++            <Screen className="rp-folds" title="Vocal folds" sub="Slowed 100×">
++              <Stroboscope />
++            </Screen>
++            <Screen className="rp-spec" title="Spectrum">
++              <SpectrumView />
++            </Screen>
++            <Screen className="rp-vowels" title="Vowels" sub="F1 / F2">
++              <VowelMap />
++            </Screen>
++            <Screen className="rp-roll" title="Pitch">
++              <PianoRoll />
++            </Screen>
++          </div>
++        </div>
++      )}
++    </>
++  );
++}

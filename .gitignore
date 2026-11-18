@@ -1,0 +1,19 @@
+# renders and inputs stay local
+*.wav
+*.mp3
+*.mp4
+*.f32
+*.tele
+full/loops/
+full/*.json
+!full/ooh-*.json
+!full/rh-*.json
+fx/
+src/
+ht-*.json
+inputs/whisper.txt
+film/env.json
+film2/segs/
+film2/tele/
+.venv/
+node_modules/
