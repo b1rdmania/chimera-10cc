@@ -42,7 +42,20 @@ The kit does the same thing with one simulated throat:
 
 ## The 10cc track
 
-The full "I'm Not in Love" build adds more on top of the kit: a high choir line, an "ooh" melody in the break, an electric-piano-style fill, a whispered "Big boys don't cry" in Chimera's whisper mode, and a mouth kick. That pipeline is in [10cc/](10cc/). The original recording, lyrics and note transcription are copyright, so they are not included. [10cc/README.md](10cc/README.md) explains what to supply.
+The full "I'm Not in Love" build adds more on top of the kit: a high choir line, an "ooh" melody in the break, an electric-piano-style fill, a whispered "Big boys don't cry" in Chimera's whisper mode, and a mouth kick. That pipeline is in [10cc/](10cc/).
+
+The track has about 118 voices, all from one simulated throat. 10cc used 624.
+
+| Part | Voices |
+|---|---|
+| Choir tape loops: 28 pitches, 2 to 5 detuned copies each (46 male, 38 female, 21 child) | 105 |
+| Lead and its double | 2 |
+| Harmonies: a third above, a third below, a child octave in the bridge, a female lift in the verses | 4 |
+| "Ooh" lines in the break | 2 |
+| Electric-piano-style fill | 3 |
+| Whisper and mouth kick | 2 |
+
+The video shows up to 32 faces at once, in the bridge. The original recording, lyrics and note transcription are copyright, so they are not included. [10cc/README.md](10cc/README.md) explains what to supply.
 
 ## PS: the video
 
