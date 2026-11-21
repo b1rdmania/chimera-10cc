@@ -57,6 +57,10 @@ The track has about 118 voices, all from one simulated throat. 10cc used 624.
 
 The video shows up to 32 faces at once, in the bridge. The original recording, lyrics and note transcription are copyright, so they are not included. [10cc/README.md](10cc/README.md) explains what to supply.
 
+## Covers from MIDI
+
+After 10cc we covered Enigma's "Sadeness (Part I)", Deep Forest's "Sweet Lullaby", Enya's "Orinoco Flow" and Tallis's 40-voice "Spem in alium". The main lesson: take the notes from a MIDI file of the song, not by pitch-tracking the record. The monks sing real chant from GregoBase, and the drums are Chimera beatboxing. The tool and the lessons are in [covers/](covers/).
+
 ## PS: the video
 
 Chimera draws its voice as it sings: the head in cross-section, the airway, the vocal folds, the sound spectrum. It can also save that data frame by frame. The video plays the data back through Chimera's own screens, one face per voice that is actually sounding, from 1 face in the verses to 32 in the bridge. A virtual clock steps the browser one frame at a time, so the picture stays in exact sync with the sound. The scripts and a small Chimera patch are in [10cc/](10cc/).

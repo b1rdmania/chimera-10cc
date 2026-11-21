@@ -1,0 +1,15 @@
+{
+  "midi": "example.mid",
+  "name": "example-cover",
+  "out": "out",
+  "parts": [
+    {"track": 1, "name": "lead", "mode": "mono", "lyr": "words:la lu li lo", "vib": 25, "bus": "v",
+     "copies": [["female", 0, 0, 0, 1.0], ["female", 9, 0, 0.15, 0.35]]},
+    {"track": 2, "name": "choir", "mode": "poly", "k": 3, "spread": 0.6, "lyr": "legato:ooh", "vib": 15, "bus": "c",
+     "copies": [["male", -6, 0, -0.3, 0.5], ["female", 7, 0, 0.3, 0.5], ["child", -4, 1, 0, 0.25]]},
+    {"track": 3, "name": "bass", "mode": "mono", "lyr": "legato:m", "vib": 0, "bus": "b",
+     "copies": [["male", 0, 0, 0, 0.8]]}
+  ],
+  "drums": {"tracks": [4], "gain": 0.8},
+  "fx": {"choir": 0.7, "bass": 0.9, "drums": 1.6, "vwet": 0.8}
+}

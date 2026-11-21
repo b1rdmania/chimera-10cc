@@ -54,3 +54,7 @@ You are a coding agent. A person wants a song sung entirely by Chimera, the phys
 - Chimera sings English well. It also reads Korean and Russian lyrics (see the Chimera README).
 - Consonants are softer than a real singer's.
 - Auto chords are simple (one chord per bar from I, IV, V, vi, ii, iii). Give chords by hand for anything richer.
+
+## Cover an existing song
+
+If the person has a MIDI file of the song, use `covers/midicover.py`, not songkit. It sings each MIDI track as its own Chimera voice and turns the drum track into Chimera beatboxing. Read `covers/README.md` first. Take the notes from a MIDI file. Do not pitch-track the record, because pitch-tracking gives wrong notes. Do not type copyrighted lyrics: use vowels, or the `whisper:` mode on a recording the person supplies.

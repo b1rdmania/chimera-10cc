@@ -18,3 +18,4 @@ ht-*.json
 .venv/
 node_modules/
 out/
+__pycache__/
